@@ -34,8 +34,8 @@ describe('inlines', () => {
       { kind: 'text', text: ' now' },
     ]);
     // A repo path is not a URL the console can open; the source still reads.
-    expect(inlines('read [the plan](docs/team8/plans/x.md) first')).toEqual([
-      { kind: 'text', text: 'read [the plan](docs/team8/plans/x.md) first' },
+    expect(inlines('read [the plan](docs/team8-ai/plans/x.md) first')).toEqual([
+      { kind: 'text', text: 'read [the plan](docs/team8-ai/plans/x.md) first' },
     ]);
     expect(inlines('[x](javascript:alert(1))')).toEqual([{ kind: 'text', text: '[x](javascript:alert(1))' }]);
   });

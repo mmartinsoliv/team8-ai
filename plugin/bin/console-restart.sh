@@ -24,15 +24,15 @@ console_up && exit 0
 # Nothing answering means it crashed, was killed, or stopped itself once no
 # Claude session was running (it records `auto` before it does, so this reopens
 # nothing stale). Without a record it has never run here: only a team spawn, a
-# workflow or /team8:console starts it the first time.
+# workflow or /team8-ai:console starts it the first time.
 [ -f "$RECORD" ] || exit 0
 
 # A burst of tool calls puts every hook on this line at the same instant, so the
 # spawn sits behind an atomic mkdir. A lock left behind by a killed hook would
 # block every later restart, so one older than a minute is cleared rather than
 # trusted.
-lock="$CLAUDE_DIR/team8/restarting"
-mkdir -p "$CLAUDE_DIR/team8" 2>/dev/null
+lock="$CLAUDE_DIR/team8-ai/restarting"
+mkdir -p "$CLAUDE_DIR/team8-ai" 2>/dev/null
 [ -n "$(find "$lock" -maxdepth 0 -mmin +1 2>/dev/null)" ] && rmdir "$lock" 2>/dev/null
 mkdir "$lock" 2>/dev/null || exit 0
 

@@ -1,7 +1,7 @@
 node_modules/
 # plugin/dist/ is deliberately COMMITTED: the plugin ships as files and nothing
 # builds on the user's machine. Rebuild with `npm run build` before releasing.
-.team8/
+.team8-ai/
 .DS_Store
 *.log
 PROGRESS.md
@@ -18,5 +18,5 @@ graphify-out/
 design_handoff_agent_teams_console/
 .playwright-mcp/
 plugin/tsconfig.json
-docs/team8/
+docs/team8-ai/
 docs/design/

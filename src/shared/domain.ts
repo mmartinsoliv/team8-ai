@@ -353,7 +353,7 @@ export interface BuildInfo {
   kind: 'installed' | 'dev';
   /** A working copy's commit. */
   sha?: string;
-  /** The newest team8 version installed_plugins.json lists. */
+  /** The newest team8-ai version installed_plugins.json lists. */
   installed?: string;
   /** An installed build older than the installed version. */
   stale: boolean;
@@ -411,7 +411,7 @@ export interface TeamState {
    * — no session pays for a brief nobody has opened the overview to read.
    */
   brief?: Brief;
-  /** Absent until the lead writes a file under `docs/team8/plans/`. */
+  /** Absent until the lead writes a file under `docs/team8-ai/plans/`. */
   plan?: PlanProgress;
   /** A session switch is reading its target in; the select routes answer 409 until it lands. */
   switching?: boolean;
@@ -435,7 +435,7 @@ export interface TeamState {
   leadReachable?: boolean;
 }
 
-/** The three ways `team8:tasks` can decide a batch runs — the console's three pills. */
+/** The three ways `team8-ai:tasks` can decide a batch runs — the console's three pills. */
 export type DecidedMode = 'subagents' | 'teammates' | 'workflow';
 
 /**
@@ -468,7 +468,7 @@ export interface TeamSummary {
   // but parked at its prompt; done = the lead is not running.
   state: 'live' | 'idle' | 'done';
   /**
-   * The mode `team8:tasks` decided for this session's batch, read off the run
+   * The mode `team8-ai:tasks` decided for this session's batch, read off the run
    * log the lead wrote. Absent until a batch decides one: the row's pill then
    * comes from evidence (a roster, a subagent tree, a run) or is left blank.
    */

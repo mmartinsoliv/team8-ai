@@ -59,7 +59,7 @@ export function takeDeliverable(entries: InboxEntry[], to: string): { take: numb
 }
 
 export function contextFor(delivered: InboxEntry[], left: number): string {
-  const lines = ['Messages that reached you mid-turn (team8 delivered them early; they will not repeat at the end of your turn):', ...delivered.map(frame)];
+  const lines = ['Messages that reached you mid-turn (team8-ai delivered them early; they will not repeat at the end of your turn):', ...delivered.map(frame)];
   if (left) lines.push(`${left} more message${left === 1 ? '' : 's'} will arrive when your turn ends.`);
   return lines.join('\n');
 }

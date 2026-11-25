@@ -81,7 +81,7 @@ const NOT_TOOLS = new Set(['model', 'idle', 'gap', 'asleep']);
 const IDLE_ROW_MIN_MS = 60_000;
 
 export function renderMarkdown(r: MeasureReport): string {
-  const out = [`# team8 measure: session ${r.sessionId}`, ''];
+  const out = [`# team8-ai measure: session ${r.sessionId}`, ''];
   if (r.since !== undefined) out.push(`Since ${new Date(r.since).toISOString()}.`, '');
 
   out.push(

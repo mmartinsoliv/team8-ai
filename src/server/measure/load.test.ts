@@ -20,7 +20,7 @@ describe('findSession', () => {
       JSON.stringify({
         type: 'assistant',
         timestamp: '2026-09-30T08:00:00Z',
-        message: { id: 'm1', model: 'claude-opus-5-5', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { name: 'rows', subagent_type: 'team8:executor', prompt: 'p' } }] },
+        message: { id: 'm1', model: 'claude-opus-5-5', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { name: 'rows', subagent_type: 'team8-ai:executor', prompt: 'p' } }] },
       }) + '\n',
     );
     await writeFile(path.join(sub, 'agent-arows-0123456789abcdef.jsonl'), '');
@@ -48,7 +48,7 @@ describe('findSession', () => {
     await mkdir(sub, { recursive: true });
     await writeFile(path.join(project, 'sid1.jsonl'), '');
     await writeFile(path.join(sub, 'agent-a0f1e2d3c4b5a6978.jsonl'), '');
-    await writeFile(path.join(sub, 'agent-a0f1e2d3c4b5a6978.meta.json'), JSON.stringify({ agentType: 'team8:reviewer' }));
+    await writeFile(path.join(sub, 'agent-a0f1e2d3c4b5a6978.meta.json'), JSON.stringify({ agentType: 'team8-ai:reviewer' }));
 
     const files = await findSession(home, 'sid1');
     expect(files?.agents.map((a) => [a.name, a.role])).toEqual([['agent-a0f1e2d3c4b5a6978', 'reviewer']]);

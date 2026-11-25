@@ -5,7 +5,7 @@ import type { AgentTrace } from './trace';
 export interface TrackTail { executor: string; lastCompletedAt: number; clearedAt: number; tailMs: number }
 export interface IdleWithWork { executor: string; taskId: string; idleFrom: number; idleTo: number; claimedAt: number; ms: number }
 
-// team8:run tells an executor "your track is clear" when its review is done.
+// team8-ai:run tells an executor "your track is clear" when its review is done.
 const TRACK_CLEAR = /track is clear|track's clear/i;
 
 export function reviewTails(traces: AgentTrace[]): TrackTail[] {
@@ -44,7 +44,7 @@ function currentGeneration(gens: Generation[] | undefined, t: number): Generatio
 // Idle time an executor spent with a task it later claimed already created and
 // unblocked. Each idle stretch counts once, however many claims follow it.
 export function idleWithWork(traces: AgentTrace[], attributions: Map<string, Attribution>): IdleWithWork[] {
-  // team8 reuses a task id across batches, each its own full create -> work ->
+  // team8-ai reuses a task id across batches, each its own full create -> work ->
   // complete cycle. A flat map would answer a later batch's readiness question
   // with an earlier batch's blockers or completion time, so every id keeps its
   // own ordered list of generations instead.

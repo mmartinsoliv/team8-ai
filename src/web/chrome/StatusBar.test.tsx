@@ -75,7 +75,7 @@ it('exposes the switcher as a tablist with the seven views', () => {
 function tabsWithPlan(solo: boolean): (string | null)[] {
   render(
     <StatusBar
-      state={{ ...sampleTeamState(), plan: { path: '/r/docs/team8/plans/p.md', mtime: 1, tasks: [] } }}
+      state={{ ...sampleTeamState(), plan: { path: '/r/docs/team8-ai/plans/p.md', mtime: 1, tasks: [] } }}
       view="wall"
       onViewChange={vi.fn()}
       now={FIXTURE_NOW}
@@ -108,7 +108,7 @@ it('renders the mark and the team name, the wordmark itself heard not seen', () 
   // The word survives for the picker trigger's accessible name (it is half of
   // `aria-labelledby="team-wordmark team-trigger-name"`), but on screen the
   // mark alone stands for the brand.
-  expect(screen.getByText('team8')).toBeTruthy();
+  expect(screen.getByText('team8-ai')).toBeTruthy();
   expect(screen.getByTestId('bar-wordmark').style.color).toBe('var(--color-accent)');
   expect(screen.getByTestId('logo-mark')).toBeTruthy();
   expect(screen.getByText('session-98b0b4a7')).toBeTruthy();
@@ -266,7 +266,7 @@ it('makes the team name the control that opens the team list', () => {
       appearance={APPEARANCE}
     />,
   );
-  const trigger = screen.getByRole('button', { name: 'team8 session-98b0b4a7' });
+  const trigger = screen.getByRole('button', { name: 'team8-ai session-98b0b4a7' });
   expect(trigger.getAttribute('aria-haspopup')).toBe('listbox');
   expect(trigger.getAttribute('aria-expanded')).toBe('false');
 

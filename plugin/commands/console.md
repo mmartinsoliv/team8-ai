@@ -1,9 +1,9 @@
 ---
-description: Open the team8 console on this session, starting or upgrading it only when needed
+description: Open the team8-ai console on this session, starting or upgrading it only when needed
 allowed-tools: ["Bash"]
 ---
 
-# team8
+# team8-ai
 
 Run this, then report its last line as the console URL in one line. Do not read
 source files.
@@ -29,4 +29,4 @@ Report:
 > Console on this session: <URL>
 
 The console never shuts itself down. It stays on this session until you pick
-something else in its picker or run `/team8:console` from another session.
+something else in its picker or run `/team8-ai:console` from another session.

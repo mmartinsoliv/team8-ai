@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Use when a feature, subsystem or multi-step change needs a design and an implementation plan before anyone writes code — "plan this", "let's design X", "plan it with the team", "plan and then run it". Brainstorms the design with the user into a spec, then the lead writes the plan in the same session a task at a time, the tasks land on the shared list, and the user approves before team8:run executes. `--skip-reviews` takes every recommended answer itself and stops only to ask the mode.
+description: Use when a feature, subsystem or multi-step change needs a design and an implementation plan before anyone writes code — "plan this", "let's design X", "plan it with the team", "plan and then run it". Brainstorms the design with the user into a spec, then the lead writes the plan in the same session a task at a time, the tasks land on the shared list, and the user approves before team8-ai:run executes. `--skip-reviews` takes every recommended answer itself and stops only to ask the mode.
 argument-hint: "[--skip-reviews] <request>"
 ---
 
@@ -9,12 +9,12 @@ argument-hint: "[--skip-reviews] <request>"
 ## Overview
 
 Three phases. Phase 1 and the plan-writing half of 2 are the vendored
-brainstorming and writing-plans skills, verbatim. team8 begins where the plan
+brainstorming and writing-plans skills, verbatim. team8-ai begins where the plan
 becomes tasks: tracks and a task list, a run log, and the run.
 
 1. **Brainstorm** — the lead turns the idea into an approved spec, in dialogue with the user.
-2. **Plan** — the lead writes the plan from this skill's `writing-plans.md` in the same session, skeleton first and then one task at a time, and creates the tasks through `team8:tasks`.
-3. **Run** — the lead shows the task table and invokes `team8:run` in the same turn. The spec approval in Phase 1 is the only gate; the user adjusts by interrupting.
+2. **Plan** — the lead writes the plan from this skill's `writing-plans.md` in the same session, skeleton first and then one task at a time, and creates the tasks through `team8-ai:tasks`.
+3. **Run** — the lead shows the task table and invokes `team8-ai:run` in the same turn. The spec approval in Phase 1 is the only gate; the user adjusts by interrupting.
 
 **Core principle: the plan is written where the user can see it.** The lead
 that brainstormed with the user writes the plan in the same session, a task
@@ -23,37 +23,37 @@ the conversation, and every question it has becomes a relay round the user
 waits on.
 
 **The plan does not know the mode.** Subagents, teammates or workflow is
-settled in `team8:tasks`, after the tasks exist, by asking the user.
+settled in `team8-ai:tasks`, after the tasks exist, by asking the user.
 Everything before that — the classification, the questions, the approaches,
 the design, the spec, the plan — is argued from the product alone, so the
 same request writes the same plan whatever mode runs it. A request that names
 a mode, in its words or in a project or folder name, changes nothing before
 the Mode ask.
 
-**Every batch leaves a run log** at `docs/team8/runs/YYYY-MM-DD-<topic>.md`:
+**Every batch leaves a run log** at `docs/team8-ai/runs/YYYY-MM-DD-<topic>.md`:
 who ran, on what model, how many rounds, what it was estimated at, what it
 cost. It is how a past session gets debugged. See The run log below.
 
-**Did `team8:tasks` send you one item from a batch?** Plan only that item, and
-stop once its tasks land. Hand back to `team8:tasks` instead of running Phase 3,
-so the batch gets one closing and one `team8:run`. Only the first item planned
+**Did `team8-ai:tasks` send you one item from a batch?** Plan only that item, and
+stop once its tasks land. Hand back to `team8-ai:tasks` instead of running Phase 3,
+so the batch gets one closing and one `team8-ai:run`. Only the first item planned
 in the batch cuts the branch and opens the run log. Later items reuse both.
 
 ## `--skip-reviews`
 
 The trailing `ARGUMENTS:` line may carry `--skip-reviews`. Strip it; the
 rest is the request. The flag is the user's approval given in advance: every
-question this skill, `writing-plans.md`, `team8:reproduce` and `team8:run`
+question this skill, `writing-plans.md`, `team8-ai:reproduce` and `team8-ai:run`
 would put to them resolves to its `(Recommended)` option, stated in one line
 in chat where the question would have been. Everything is still presented and written exactly
 as below — the classification, the design, the spec file and its commit, the
 plan with its progress lines, the run log — so the user can read it back.
 Nothing waits. The visual companion is never offered. The flag holds for the
-whole batch, including an item `team8:tasks` sends back through this skill.
+whole batch, including an item `team8-ai:tasks` sends back through this skill.
 
 Two questions are still asked:
 
-- The Mode ask in `team8:tasks` — subagents or teammates.
+- The Mode ask in `team8-ai:tasks` — subagents or teammates.
 - A question whose recommended answer needs something only the user has, or
   changes something outside the repo — an attachment that won't open, inputs
   that don't exist yet, a stopgap in production.
@@ -79,7 +79,7 @@ the approval gate never does.
 
 ### Three Paths
 
-**A bug with no confirmed cause goes to `team8:reproduce` first.** Say that
+**A bug with no confirmed cause goes to `team8-ai:reproduce` first.** Say that
 as your classification. Its probe has its own yes, before this phase's
 approval, and its report is the context for this phase. Classify the fix
 once there is one.
@@ -126,7 +126,7 @@ artifact, never the approval.
 
 **Never offer to skip this skill.** "This is small enough that the
 pipeline is overkill, want me to just write it?" is not a question to
-ask — the user invoked `team8:plan`, and a small task is one task
+ask — the user invoked `team8-ai:plan`, and a small task is one task
 with a two-line design, not a reason to bypass the tasks, the table and
 the run. The same holds when the folder is not a git repo:
 say so once, skip the branch cut and every commit, and do everything
@@ -143,11 +143,11 @@ else exactly as written.
 | "The spike works, so I'll keep the code" | A spike's output is an answer. Keeping the code is a new request — classify it. |
 | "It grew, but I'm almost done — no need to re-classify" | Hidden complexity upgrades the path mid-task. Stop and say so. |
 | "They approved the spike, so the follow-up change is approved too" | Each task gets its own classification and its own approval. |
-| "This is small enough that team8:plan is overkill — I'll offer to write it directly" | The user chose the pipeline by invoking it. Small means one task and one worker, never no tasks and no approval. |
+| "This is small enough that team8-ai:plan is overkill — I'll offer to write it directly" | The user chose the pipeline by invoking it. Small means one task and one worker, never no tasks and no approval. |
 | "No git repo, so the branch and run log can't happen — I'll just do the work" | Only the branch cut and the commits depend on git. Tasks, table and run do not. |
-| "The ticket has repro steps — I'll just run them" | Reproducing is `team8:reproduce`: propose the probe and get a yes first. |
+| "The ticket has repro steps — I'll just run them" | Reproducing is `team8-ai:reproduce`: propose the probe and get a yes first. |
 | "Same job on 20 files — I'll write one script and run it" | One operation over many inputs is a fan-out: batches handled by agents, plus a verify step. Do not ask the user to choose between a script and agents. |
-| "This approach splits into disjoint tracks, so teammates can build at once" | How agents run the work is not a trade-off between approaches. The mode is asked in `team8:tasks`, after the tasks exist; a design shaped for a mode answers that question before the user does. |
+| "This approach splits into disjoint tracks, so teammates can build at once" | How agents run the work is not a trade-off between approaches. The mode is asked in `team8-ai:tasks`, after the tasks exist; a design shaped for a mode answers that question before the user does. |
 | "The request — or the folder name — says teammates (or subagents), so I'll design for it" | Nothing before the Mode ask uses it. The same request without that word writes the same plan. |
 | "They passed `--skip-reviews`, so I can skip presenting the design too" | The flag skips the waiting, not the presenting. The design, the spec and the plan are still written where the user can read them back. |
 
@@ -168,7 +168,7 @@ your path and complete them in order.
 2. **Ask clarifying questions** — one at a time through AskUserQuestion, the ones that matter
 3. **Present short design in chat** — approach, files touched, testing
 4. **Get approval** — STOP on an AskUserQuestion (`Go ahead (Recommended)` / `Needs changes`, corrections in Other) and go on only on `Go ahead`; presenting the design and starting in the same breath is skipping the gate
-5. **Implement** — hand the work to `team8:tasks`, then `team8:run`; no plan document
+5. **Implement** — hand the work to `team8-ai:tasks`, then `team8-ai:run`; no plan document
 
 **Architectural:**
 1. **Explore project context** — check files, docs, recent commits
@@ -176,7 +176,7 @@ your path and complete them in order.
 3. **Ask clarifying questions** — one at a time through AskUserQuestion, understand purpose/constraints/success criteria
 4. **Propose 2-3 approaches** — with trade-offs and your recommendation
 5. **Present design** — in sections scaled to their complexity, get user approval after each section through AskUserQuestion
-6. **Write design doc** — save to `docs/team8/specs/YYYY-MM-DD-<topic>-design.md` and commit
+6. **Write design doc** — save to `docs/team8-ai/specs/YYYY-MM-DD-<topic>-design.md` and commit
 7. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
 8. **User reviews written spec** — ask with AskUserQuestion to review the spec file before proceeding
 9. **Transition to Phase 2** — the lead writes the plan
@@ -191,7 +191,7 @@ digraph brainstorming {
     "Present short design in chat" [shape=box];
     "Human approves?" [shape=diamond];
     "Investigate; report recommendation" [shape=doublecircle];
-    "team8:tasks, then team8:run (no plan doc)" [shape=doublecircle];
+    "team8-ai:tasks, then team8-ai:run (no plan doc)" [shape=doublecircle];
     "Explore project context" [shape=box];
     "Ask clarifying questions" [shape=box];
     "Propose 2-3 approaches" [shape=box];
@@ -210,7 +210,7 @@ digraph brainstorming {
     "Ask clarifying questions (bounded)" -> "Present short design in chat";
     "Present short design in chat" -> "Human approves?";
     "Human approves?" -> "Investigate; report recommendation" [label="spike: yes"];
-    "Human approves?" -> "team8:tasks, then team8:run (no plan doc)" [label="bounded: yes"];
+    "Human approves?" -> "team8-ai:tasks, then team8-ai:run (no plan doc)" [label="bounded: yes"];
     "Hidden complexity? Upgrade path" -> "Classify: spike / bounded / architectural";
     "Explore project context" -> "Ask clarifying questions";
     "Ask clarifying questions" -> "Propose 2-3 approaches";
@@ -228,7 +228,7 @@ digraph brainstorming {
 **Terminal states are path-bound.** Architectural: the ONLY thing that
 follows brainstorming is Phase 2 — never frontend-design, mcp-builder, or
 any other implementation skill. Bounded: after approval, the work goes to
-`team8:tasks` and then `team8:run`; no plan document. Spike: the terminal
+`team8-ai:tasks` and then `team8-ai:run`; no plan document. Spike: the terminal
 state is a reported recommendation.
 
 ### The Process
@@ -283,7 +283,7 @@ is the whole process.
 
 **Documentation:**
 
-- Write the validated design (spec) to `docs/team8/specs/YYYY-MM-DD-<topic>-design.md`
+- Write the validated design (spec) to `docs/team8-ai/specs/YYYY-MM-DD-<topic>-design.md`
   - (User preferences for spec location override this default)
 - Use elements-of-style:writing-clearly-and-concisely skill if available
 - Commit the design document to git
@@ -332,10 +332,10 @@ this skill's `visual-companion.md` (beside this file; its `scripts/` sit next to
 ## Phase 2: Plan
 
 The lead writes the plan in this session. Planning is solo: nothing is
-spawned — no teammate, no subagent — until Phase 3 invokes `team8:run`.
+spawned — no teammate, no subagent — until Phase 3 invokes `team8-ai:run`.
 
 **Before writing:** cut the batch branch — `git checkout -b <topic>` — so
-the plan and the tasks land on it and `team8:run` finds it checked out. Open
+the plan and the tasks land on it and `team8-ai:run` finds it checked out. Open
 the run log from the template below, fill the Brainstorm section, and commit
 it on the branch. **Not a git repo?** Say so in one line, write the run log
 and plan as files anyway, and skip the branch and every commit from here to
@@ -353,8 +353,8 @@ exactly as it says:
    tab counts the same thing from the file.
 3. **Self-review inline:** writing-plans' three checks, fixed in place. No
    subagent.
-4. **Tasks through `team8:tasks`,** as writing-plans' "Create the Tasks" says,
-   including the three checks `team8:tasks` runs before its closing.
+4. **Tasks through `team8-ai:tasks`,** as writing-plans' "Create the Tasks" says,
+   including the three checks `team8-ai:tasks` runs before its closing.
 
 **Code in the plan is written, not run.** No builds, prototypes or scratch
 code while planning. If a step rests on something unproven, ask the user with AskUserQuestion;
@@ -362,7 +362,7 @@ settling it is a spike in Phase 1, not work in Phase 2.
 
 ## Phase 3: Run
 
-If `team8:tasks` sent you one item from a batch, skip this phase and hand back
+If `team8-ai:tasks` sent you one item from a batch, skip this phase and hand back
 to it (see Overview).
 
 The spec approval in Phase 1 was the gate. A finished plan runs at once; the
@@ -372,30 +372,30 @@ is stopped and re-dispatched from the edited list.
 1. **Fill the Plan section of the run log** — self-review fixes, task and
    track counts, the estimate total — and **commit the plan and the log** on
    the batch branch, so every executor can read them.
-2. **Close with the `team8:tasks` ending**: the mode line first (who chose it
-   and why, per `team8:tasks` Mode — the user's answer whenever it is
+2. **Close with the `team8-ai:tasks` ending**: the mode line first (who chose it
+   and why, per `team8-ai:tasks` Mode — the user's answer whenever it is
    subagents or teammates), the plan path, the table (task, blocked by,
    model, estimate) with its total, and the notes (tracks, what starts now,
    sizing you were unsure about, any residual ruling). No question follows it.
-3. **In the same turn, invoke `team8:run`** in the stated mode. The tasks and
+3. **In the same turn, invoke `team8-ai:run`** in the stated mode. The tasks and
    the branch exist; `run` skips its own task creation and branch cut. Ending
    the turn after the table, with nothing dispatched, is the failure this
    phase exists to prevent.
 
 ## The run log
 
-One file per batch, `docs/team8/runs/YYYY-MM-DD-<topic>.md`, on the batch
+One file per batch, `docs/team8-ai/runs/YYYY-MM-DD-<topic>.md`, on the batch
 branch, so it lands with the PR and a past batch can be read back next to
 its spec, its plan and its diff. Phase 2 opens it, Phase 3 fills the Plan
-section, `team8:run` fills the Run section at close. Numbers are the ones
+section, `team8-ai:run` fills the Run section at close. Numbers are the ones
 you have at the time; a line you cannot fill yet stays as its placeholder
 until the phase that can.
 
 ```markdown
 # Run log — <topic>
 
-spec: docs/team8/specs/<file>.md
-plan: docs/team8/plans/<file>.md
+spec: docs/team8-ai/specs/<file>.md
+plan: docs/team8-ai/plans/<file>.md
 branch: <branch>
 pr: <url, at close>
 
@@ -405,7 +405,7 @@ pr: <url, at close>
 - spec rounds with the user: <n> (or `0 · --skip-reviews`)
 
 ## Plan
-- plan: written by the lead · self-review fixes: <n> (a batch that skipped this skill: `plan: none · tasks from <Jira | Linear | the user> via team8:tasks`)
+- plan: written by the lead · self-review fixes: <n> (a batch that skipped this skill: `plan: none · tasks from <Jira | Linear | the user> via team8-ai:tasks`)
 - tasks: <n> · tracks: <n> · waves: <n> · peak: <n> at once · mode: subagents | teammates | workflow — <the user's choice | read off the graph> — <reason>
 - estimate: ≈$<total> (per task in the plan's table)
 

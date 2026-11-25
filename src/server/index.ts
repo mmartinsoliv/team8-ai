@@ -127,7 +127,7 @@ export function parseArgs(argv: string[]): Cli {
     confirm,
     claudeHome,
     settingsPath: path.join(claudeHome, 'settings.json'),
-    dbPath: path.join(claudeHome, 'team8', 'events.db'),
+    dbPath: path.join(claudeHome, 'team8-ai', 'events.db'),
     team,
     session,
     cwd,
@@ -338,8 +338,8 @@ function lastCwds(buf: Buffer, slug: string): { last?: string; filedUnder?: stri
 }
 
 /**
- * The mode `team8:tasks` decided, read off the lead's own write of the run
- * log: the `mode: <x> — <reason>` line of `docs/team8/runs/<batch>.md`. Only a
+ * The mode `team8-ai:tasks` decided, read off the lead's own write of the run
+ * log: the `mode: <x> — <reason>` line of `docs/team8-ai/runs/<batch>.md`. Only a
  * tool_use record counts — the skill text arrives as a user record and quotes
  * the same line as an example — and the template's `mode: subagents | teammates …`
  * has no dash after the first word, so an unfilled log decides nothing.
@@ -347,7 +347,7 @@ function lastCwds(buf: Buffer, slug: string): { last?: string; filedUnder?: stri
 const DECIDED_MODE = /mode: (subagents|teammates|workflow) —/g;
 
 function lastDecidedMode(buf: Buffer): DecidedMode | undefined {
-  const marker = 'docs/team8/runs/';
+  const marker = 'docs/team8-ai/runs/';
   let at = buf.lastIndexOf(marker);
   while (at >= 0) {
     const start = buf.lastIndexOf(0x0a, at) + 1;
@@ -927,7 +927,7 @@ export async function walkTeams(
 
   const sessions = await readSessions(sessionsRoot);
   // team -> the REAL session driving it, which is also the only place its name
-  // ("team8", whatever `/rename` last wrote) can be read from.
+  // ("team8-ai", whatever `/rename` last wrote) can be read from.
   const liveTeams = projectsRoot
     ? await teamsOfLiveSessions(projectsRoot, sessions)
     : new Map<string, string>();
@@ -1729,7 +1729,7 @@ export async function main(argv: string[]): Promise<number> {
     },
     onShutdown: stop,
   }));
-  console.log(`team8 on http://127.0.0.1:${port}${cli.readOnly ? ' (read-only)' : ''}`);
+  console.log(`team8-ai on http://127.0.0.1:${port}${cli.readOnly ? ' (read-only)' : ''}`);
 
   /**
    * A console can be running before the team it should show even exists: the

@@ -2,8 +2,8 @@
 # PreToolUse gate on TaskCreate and TaskUpdate. It reads only the call's own
 # input, never a task file, so it cannot read the wrong list and it leaves
 # other sessions' task lists alone:
-# - a TaskCreate carrying any of team8's four metadata keys must carry all
-#   four; one carrying none of them is not team8's (a todo list, a checklist);
+# - a TaskCreate carrying any of team8-ai's four metadata keys must carry all
+#   four; one carrying none of them is not team8-ai's (a todo list, a checklist);
 # - a teammate's TaskUpdate to completed must carry metadata.verified in that
 #   same call; the lead's own completions carry no agent_id and pass. A
 #   teammate's agent_id is name@team on older builds and a<name>-<16 hex> on
@@ -26,7 +26,7 @@ reason=$(printf '%s' "$payload" | jq -r '
       ["complexity", "model", "effort", "why"] as $keys
       | [$keys[] | select((($m[.] // "") | tostring) == "")] as $missing
       | if ($missing | length) > 0 and ($missing | length) < ($keys | length)
-        then "TaskCreate: metadata is missing \($missing | join(", ")) — a team8 task carries complexity, model, effort and why (team8:tasks)"
+        then "TaskCreate: metadata is missing \($missing | join(", ")) — a team8-ai task carries complexity, model, effort and why (team8-ai:tasks)"
         else empty end
     elif .tool_name == "TaskUpdate" and $in.status == "completed"
       and ((.agent_id // "") | test("@|^a.+-[0-9a-f]{16}$"))

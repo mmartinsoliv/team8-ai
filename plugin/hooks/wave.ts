@@ -28,5 +28,5 @@ export function unblockedIdle(
 
 export function noticeText(completedId: string, unblocked: readonly Unblocked[]): string {
   const items = unblocked.map((u) => `#${u.id} "${u.subject}" (owner ${u.owner}, ${u.why})`).join('; ');
-  return `team8: #${completedId} completed. Unblocked with nobody on it: ${items}. Dispatch per team8:run.`;
+  return `team8-ai: #${completedId} completed. Unblocked with nobody on it: ${items}. Dispatch per team8-ai:run.`;
 }

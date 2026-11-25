@@ -9,7 +9,7 @@ description: Use when breaking work into tasks — a feature, a migration, a rev
 
 A task list is a delegation contract, not a to-do list. Each task gets picked up by an agent with **none of this conversation's context**, possibly in parallel with its siblings, possibly on a different model. That needs three things: a description that stands alone, dependencies that are real, and a model sized to the task.
 
-**This skill also decides how the list runs.** Subagents, teammates or workflow is read off the finished graph here — and, between subagents and teammates, asked of the user with the recommendation first — stated as the first line of the closing message, and executed by `team8:run` as stated. Nothing upstream knows it — a plan is the same plan in any mode — and `run` does not re-decide it. Until this line exists, the mode is unknown, and the console shows no mode badge for the session.
+**This skill also decides how the list runs.** Subagents, teammates or workflow is read off the finished graph here — and, between subagents and teammates, asked of the user with the recommendation first — stated as the first line of the closing message, and executed by `team8-ai:run` as stated. Nothing upstream knows it — a plan is the same plan in any mode — and `run` does not re-decide it. Until this line exists, the mode is unknown, and the console shows no mode badge for the session.
 
 ## When to Use
 
@@ -17,16 +17,16 @@ Breaking work down, planning it, or turning finished analysis into tasks — esp
 
 **Not for:** a single task, or work you'll finish in the next two tool calls.
 
-**Handing these to teammates?** `team8:run` covers
+**Handing these to teammates?** `team8-ai:run` covers
 how many teammates, the dispatch contract, and settling the terminal deliverable.
 The `model` set here goes on each dispatch's `Agent` call, and the `effort` picks the
-executor definition it spawns: `team8:executor-low`, `team8:executor`,
-`team8:executor-high` or `team8:executor-xhigh`.
+executor definition it spawns: `team8-ai:executor-low`, `team8-ai:executor`,
+`team8-ai:executor-high` or `team8-ai:executor-xhigh`.
 
 ## No plan first? Check each item
 
 This applies when the items are tickets from ADO, Jira or Linear, a pasted list,
-or the user's own list, and `team8:plan` hasn't run on them this session. Check
+or the user's own list, and `team8-ai:plan` hasn't run on them this session. Check
 every item before it becomes a task. It's ready when its ticket and a few greps
 of the repo answer all four:
 
@@ -43,14 +43,14 @@ Show the verdict before the first `TaskCreate`:
 | AB#1240 Investigate gift card add errors | no | outcome, cause |
 
 A ready item becomes tasks as written, and its descriptions carry what the
-greps found. An item that isn't ready goes through `team8:plan` by itself, one
+greps found. An item that isn't ready goes through `team8-ai:plan` by itself, one
 item at a time, before the closing. It gets its own classification and its own
-approval, and a bug with no confirmed cause goes to `team8:reproduce` first.
+approval, and a bug with no confirmed cause goes to `team8-ai:reproduce` first.
 Its tasks join this list, then control comes back here. The batch gets one
-closing and one `team8:run`. If an item's plan ends as a spike, it has an
+closing and one `team8-ai:run`. If an item's plan ends as a spike, it has an
 answer instead of tasks; say so in the notes.
 
-Tasks that `team8:plan` itself hands over skip this check.
+Tasks that `team8-ai:plan` itself hands over skip this check.
 
 ## The contract: four fields, every task
 
@@ -113,7 +113,7 @@ subagents and teammates, asked (Mode, below). Once it comes out as teammates,
 set the owners before the checks and the closing; in any other mode, don't.
 
 - **Name each track's teammate** when you draw the tracks: short, lowercase,
-  from what the track builds (`gate`, `skills`, `prices`). `team8:run` spawns
+  from what the track builds (`gate`, `skills`, `prices`). `team8-ai:run` spawns
   it under exactly that name.
 - **Make it the `owner` of every task in its track** right after creating the
   tasks, in the same `TaskUpdate` that adds `blockedBy` where there is one.
@@ -153,7 +153,7 @@ The closing message has four parts, in this order. Part 4 is an action, not a qu
 
 3. **The notes** — which tasks are startable now, and any sizing you were unsure about.
 
-4. **The handoff** — invoke `team8:run` in the stated mode, in the same turn, with no question first — the one question this skill asks, subagents or teammates, came before the closing. The user adjusts by interrupting: **adjust models** re-sizes a task's model or effort, **adjust tasks** adds, removes, merges, re-scopes, re-wires or changes the mode; either edits the list with `TaskUpdate`, re-prices the table, and re-invokes `run`. A closing that ends the turn with the table and no dispatch is the failure this part exists to prevent.
+4. **The handoff** — invoke `team8-ai:run` in the stated mode, in the same turn, with no question first — the one question this skill asks, subagents or teammates, came before the closing. The user adjusts by interrupting: **adjust models** re-sizes a task's model or effort, **adjust tasks** adds, removes, merges, re-scopes, re-wires or changes the mode; either edits the list with `TaskUpdate`, re-prices the table, and re-invokes `run`. A closing that ends the turn with the table and no dispatch is the failure this part exists to prevent.
 
 ## Mode: read it off the graph, then ask
 
@@ -162,7 +162,7 @@ matching the console's: subagents, teammates, workflow — the lead never does
 the work itself; every list spawns at least one worker. Read the
 recommendation off the tracks and the task shapes; whenever it is subagents
 or teammates — however clear-cut — ask the user, recommendation first (The
-ask, below); state the result with its reason in the closing. `team8:run`
+ask, below); state the result with its reason in the closing. `team8-ai:run`
 executes whichever was chosen.
 
 The three modes are Claude Code's own ways of running work in parallel
@@ -236,7 +236,7 @@ wave 3: D (7) — after 4, 5, 6
 
 Subagents the same way: `mode: subagents — the user's choice, as recommended — 5 tickets in 5 tracks, one wave, 5 at once`.
 A subagents or teammates line that does not say the user chose it is a
-recommendation, not a mode, and `team8:run` asks before it spawns.
+recommendation, not a mode, and `team8-ai:run` asks before it spawns.
 
 A peak of 1 recommends subagents: every track running after the previous one
 is one serial line of work, whatever the file ownership looks like. It is
@@ -289,7 +289,7 @@ in the same direction, change the factor instead.
 
 | Mistake | Fix |
 |---|---|
-| A ticket turned into a task without the readiness check | Check it against the four questions first. Any "no" means it goes through `team8:plan` by itself. |
+| A ticket turned into a task without the readiness check | Check it against the four questions first. Any "no" means it goes through `team8-ai:plan` by itself. |
 | One model for the whole list | Model is per-task. A list of nine usually spans two or three tiers. |
 | Mode left implicit, or left to `run` | It is part 1 of the closing. Read it off the tracks, ask whenever it is subagents or teammates, and say it with its reason and who chose it. |
 | Teammates by habit for a one-track list | One track recommends subagents; the ask still decides. Count the tracks before recommending. |

@@ -192,7 +192,7 @@ export function createHookHandlers(deps: HookDeps): HookHandlers {
         const foreign = !str(b.agent_id) && !!lead && !!sid && sid !== lead;
         const agent = agentNameFrom(b.agent_id, leadName);
         const toolName = str(b.tool_name);
-        // The band in plugin/hooks/team8.tsx calls TaskList every 5s from the lead's process,
+        // The band in plugin/hooks/team8-ai.tsx calls TaskList every 5s from the lead's process,
         // so these are not the lead working and would fill the hook retention in minutes.
         if (toolName === 'TaskList' && !str(b.agent_id)) return { status: 200, body: {} };
         // A foreign session's permission request is the one hook the console
@@ -233,7 +233,7 @@ export function createHookHandlers(deps: HookDeps): HookHandlers {
               body: {
                 hookSpecificOutput: {
                   hookEventName: 'PostToolUse',
-                  additionalContext: `team8: Task ${stalled.id} has been at ${progress}% for over two minutes. If a step of your plan has landed since, TaskUpdate its metadata.progress to round(100 × steps done ÷ steps); otherwise carry on.`,
+                  additionalContext: `team8-ai: Task ${stalled.id} has been at ${progress}% for over two minutes. If a step of your plan has landed since, TaskUpdate its metadata.progress to round(100 × steps done ÷ steps); otherwise carry on.`,
                 },
               },
             };

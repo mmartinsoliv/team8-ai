@@ -8,7 +8,7 @@ HEALTH="http://127.0.0.1:$PORT/health"
 # Keyed by port: every console under this claude home shares the directory,
 # and an unkeyed record would have one console's restart land on another
 # console's watch.
-RECORD="$CLAUDE_DIR/team8/console-$PORT.json"
+RECORD="$CLAUDE_DIR/team8-ai/console-$PORT.json"
 
 # Anything answering counts, a 503 included: a console still reading ~/.claude
 # is up, and starting another would only race it for the port.
@@ -60,9 +60,9 @@ recorded_flags() {
 # tsx so a fresh checkout works without a build.
 start_console() {
   if [ -f "$ROOT/dist/server/index.js" ]; then
-    nohup node "$ROOT/dist/server/index.js" --port "$PORT" "$@" >>"$CLAUDE_DIR/team8.log" 2>&1 &
+    nohup node "$ROOT/dist/server/index.js" --port "$PORT" "$@" >>"$CLAUDE_DIR/team8-ai.log" 2>&1 &
   else
-    nohup npx --prefix "$ROOT/.." tsx "$ROOT/../src/server/index.ts" --port "$PORT" "$@" >>"$CLAUDE_DIR/team8.log" 2>&1 &
+    nohup npx --prefix "$ROOT/.." tsx "$ROOT/../src/server/index.ts" --port "$PORT" "$@" >>"$CLAUDE_DIR/team8-ai.log" 2>&1 &
   fi
 }
 

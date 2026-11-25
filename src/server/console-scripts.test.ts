@@ -44,9 +44,9 @@ async function fake(opts: { status?: number; health?: Record<string, unknown>; p
 }
 
 async function record(watching: unknown, forPort = port) {
-  await fs.mkdir(path.join(claudeDir, 'team8'), { recursive: true });
+  await fs.mkdir(path.join(claudeDir, 'team8-ai'), { recursive: true });
   await fs.writeFile(
-    path.join(claudeDir, 'team8', `console-${forPort}.json`),
+    path.join(claudeDir, 'team8-ai', `console-${forPort}.json`),
     JSON.stringify({ pid: 1, port: forPort, version: '1.0.44', watching }),
   );
 }
@@ -276,17 +276,17 @@ describe('task-gate.sh', () => {
     tool_input: { taskId: '3', status: 'completed', ...(opts.verified ? { metadata: { verified: opts.verified } } : {}) },
   });
 
-  it('passes a task that carries none of the four keys — a todo list, not a team8 task', async () => {
+  it('passes a task that carries none of the four keys — a todo list, not a team8-ai task', async () => {
     expect((await gate(create())).code).toBe(0);
   });
 
-  it('refuses a team8 task missing some of its four keys, naming them', async () => {
+  it('refuses a team8-ai task missing some of its four keys, naming them', async () => {
     const run = await gate(create({ model: 'sonnet', effort: 'medium' }));
     expect(run.code).toBe(2);
     expect(run.stderr).toContain('complexity, why');
   });
 
-  it('passes a team8 task with all four keys', async () => {
+  it('passes a team8-ai task with all four keys', async () => {
     const run = await gate(create({ complexity: 'standard', model: 'sonnet', effort: 'medium', why: 'one layer' }));
     expect(run.code).toBe(0);
   });
@@ -423,22 +423,22 @@ describe('agent-gate.sh', () => {
   });
   const gate = (payload: unknown) => script('agent-gate.sh', [], JSON.stringify(payload));
   const mode = (session = 'session-one') =>
-    fs.readFile(path.join(claudeDir, 'team8', `agent-mode-${session}`), 'utf8').then((s) => s.trim(), () => null);
+    fs.readFile(path.join(claudeDir, 'team8-ai', `agent-mode-${session}`), 'utf8').then((s) => s.trim(), () => null);
 
-  it("passes a spawn with no name, and a named one that is not team8's, keeping no state", async () => {
-    expect((await gate(agentCall({ type: 'team8:executor', isolation: 'worktree' }))).code).toBe(0);
+  it("passes a spawn with no name, and a named one that is not team8-ai's, keeping no state", async () => {
+    expect((await gate(agentCall({ type: 'team8-ai:executor', isolation: 'worktree' }))).code).toBe(0);
     expect((await gate(agentCall({ name: 'scout', type: 'Explore' }))).code).toBe(0);
     expect(await mode()).toBeNull();
   });
 
-  it("fixes the session's mode on its first named team8 spawn", async () => {
-    expect((await gate(agentCall({ name: 'app', type: 'team8:executor-high', isolation: 'worktree' }))).code).toBe(0);
+  it("fixes the session's mode on its first named team8-ai spawn", async () => {
+    expect((await gate(agentCall({ name: 'app', type: 'team8-ai:executor-high', isolation: 'worktree' }))).code).toBe(0);
     expect(await mode()).toBe('subagents');
   });
 
   it('refuses a reviewer spawned without the flag in a subagents session, naming it and the fix', async () => {
-    await gate(agentCall({ name: 'app', type: 'team8:executor-high', isolation: 'worktree' }));
-    const run = await gate(agentCall({ name: 'review-app-1', type: 'team8:reviewer' }));
+    await gate(agentCall({ name: 'app', type: 'team8-ai:executor-high', isolation: 'worktree' }));
+    const run = await gate(agentCall({ name: 'review-app-1', type: 'team8-ai:reviewer' }));
     expect(run.code).toBe(2);
     expect(run.stderr).toContain('review-app-1');
     expect(run.stderr).toContain('subagents');
@@ -447,22 +447,22 @@ describe('agent-gate.sh', () => {
   });
 
   it('passes a later spawn whose flag agrees', async () => {
-    await gate(agentCall({ name: 'app', type: 'team8:executor-high', isolation: 'worktree' }));
-    expect((await gate(agentCall({ name: 'review-app-1', type: 'team8:reviewer', isolation: 'worktree' }))).code).toBe(0);
+    await gate(agentCall({ name: 'app', type: 'team8-ai:executor-high', isolation: 'worktree' }));
+    expect((await gate(agentCall({ name: 'review-app-1', type: 'team8-ai:reviewer', isolation: 'worktree' }))).code).toBe(0);
   });
 
   it('refuses the flag in a teammates session the same way', async () => {
-    await gate(agentCall({ name: 'gate', type: 'team8:executor' }));
+    await gate(agentCall({ name: 'gate', type: 'team8-ai:executor' }));
     expect(await mode()).toBe('teammates');
-    const run = await gate(agentCall({ name: 'review-gate', type: 'team8:reviewer', isolation: 'worktree' }));
+    const run = await gate(agentCall({ name: 'review-gate', type: 'team8-ai:reviewer', isolation: 'worktree' }));
     expect(run.code).toBe(2);
     expect(run.stderr).toContain('teammates');
-    expect((await gate(agentCall({ name: 'review-gate', type: 'team8:reviewer' }))).code).toBe(0);
+    expect((await gate(agentCall({ name: 'review-gate', type: 'team8-ai:reviewer' }))).code).toBe(0);
   });
 
   it('keeps sessions apart', async () => {
-    await gate(agentCall({ name: 'app', type: 'team8:executor', isolation: 'worktree' }));
-    expect((await gate(agentCall({ name: 'gate', type: 'team8:executor', session: 'session-two' }))).code).toBe(0);
+    await gate(agentCall({ name: 'app', type: 'team8-ai:executor', isolation: 'worktree' }));
+    expect((await gate(agentCall({ name: 'gate', type: 'team8-ai:executor', session: 'session-two' }))).code).toBe(0);
     expect(await mode('session-two')).toBe('teammates');
   });
 
@@ -470,8 +470,8 @@ describe('agent-gate.sh', () => {
     const bin = path.join(root, 'bin-without-jq');
     await fs.mkdir(bin);
     await fs.symlink('/bin/cat', path.join(bin, 'cat'));
-    await gate(agentCall({ name: 'app', type: 'team8:executor', isolation: 'worktree' }));
-    const run = await script('agent-gate.sh', [], JSON.stringify(agentCall({ name: 'r', type: 'team8:reviewer' })), { PATH: bin });
+    await gate(agentCall({ name: 'app', type: 'team8-ai:executor', isolation: 'worktree' }));
+    const run = await script('agent-gate.sh', [], JSON.stringify(agentCall({ name: 'r', type: 'team8-ai:reviewer' })), { PATH: bin });
     expect(run.code).toBe(0);
     expect((await script('agent-gate.sh', [], 'not json')).code).toBe(0);
     expect((await script('agent-gate.sh', [], '')).code).toBe(0);

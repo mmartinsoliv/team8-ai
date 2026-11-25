@@ -1561,7 +1561,7 @@ describe('the watched folder', () => {
   });
 
   it('reads the real config lead folder', () => {
-    expect(project(buildLog(), false).folder).toBe('/Users/alanoliv/code/team8');
+    expect(project(buildLog(), false).folder).toBe('/Users/alanoliv/code/team8-ai');
   });
 });
 

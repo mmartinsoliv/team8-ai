@@ -170,7 +170,7 @@ export function StatusBar({
 
   return (
     <Bar
-      wordmark="team8"
+      wordmark="team8-ai"
       picker={
         <>
           <TeamSelect

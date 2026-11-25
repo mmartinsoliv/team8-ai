@@ -1,6 +1,6 @@
 ---
 name: multiple-code-reviews
-description: Use when the user asks to review several pull requests at once with teammates, one teammate per PR, and then post the reviews as their own or fix their own PRs. Triggers on "review these PRs with teammates", "/team8:multiple-code-reviews <urls or titles>", a list of PR links followed by "review them", or a batch of stacked PRs from one author.
+description: Use when the user asks to review several pull requests at once with teammates, one teammate per PR, and then post the reviews as their own or fix their own PRs. Triggers on "review these PRs with teammates", "/team8-ai:multiple-code-reviews <urls or titles>", a list of PR links followed by "review them", or a batch of stacked PRs from one author.
 ---
 
 # Multiple code reviews
@@ -17,7 +17,7 @@ teammate commits them to the head branch and pushes.
 Phase 1 is not a code change: no branch, no commit, no PR. Its terminal
 deliverable is a file in the session scratchpad.
 
-**REQUIRED SUB-SKILLS:** `team8:tasks` for the task contract, `team8:run` for
+**REQUIRED SUB-SKILLS:** `team8-ai:tasks` for the task contract, `team8-ai:run` for
 dispatch and roster checks, `grimoire:alanizer` for every comment body,
 `grimoire:review-as-me` for Conventional Comments and the posting mechanics.
 
@@ -35,7 +35,7 @@ dispatch and roster checks, `grimoire:alanizer` for every comment body,
    `gh` for everything because the GitHub MCP may be down. Metadata:
    `complexity: judgment, model: opus, effort: high`.
 3. **One teammate per PR**, dispatched in a single message with the seven-part
-   contract from `team8:run`. Part 6 reads: "Terminal deliverable: the report
+   contract from `team8-ai:run`. Part 6 reads: "Terminal deliverable: the report
    file. No branch, no commit, no PR." Part 5 reads: "`test -s <report> && head -40 <report>`,
    then `ALANIZED=1 gh api repos/<o>/<r>/pulls/<n> --jq '[.comments, .review_comments]'`
    to confirm nothing of yours reached the PR." `ALANIZED=1` is fine on any

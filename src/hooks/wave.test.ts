@@ -63,7 +63,7 @@ describe('noticeText', () => {
         { id: '9', subject: 'Docs', owner: 'docs', why: 'idle' },
       ]),
     ).toBe(
-      'team8: #6 completed. Unblocked with nobody on it: #7 "Probe B" (owner ghost, not running); #9 "Docs" (owner docs, idle). Dispatch per team8:run.',
+      'team8-ai: #6 completed. Unblocked with nobody on it: #7 "Probe B" (owner ghost, not running); #9 "Docs" (owner docs, idle). Dispatch per team8-ai:run.',
     );
   });
 });

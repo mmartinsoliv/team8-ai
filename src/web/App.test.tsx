@@ -1150,7 +1150,7 @@ it('wears the watched folder theme, and only while the session lives there', () 
 });
 
 const PLAN_ON_FRAME = {
-  path: '/r/docs/team8/plans/p.md',
+  path: '/r/docs/team8-ai/plans/p.md',
   mtime: 1,
   tasks: [{ n: 1, title: 'Add the type', written: false }],
 };

@@ -21,7 +21,7 @@ if [ -n "$payload" ] && command -v jq >/dev/null 2>&1; then
   short_id=$(printf '%s' "$payload" | jq -r '.session_id // empty' 2>/dev/null | cut -c1-8)
   if [ "$start_source" = resume ] && [ -n "$short_id" ] &&
     [ -f "$CLAUDE_DIR/teams/session-$short_id/config.json" ]; then
-    hint='team8: this session was resumed and its in-process teammates are gone. Before messaging any of them, run TaskList, set each in_progress task whose owner is gone back to pending, and respawn its track per team8:run, After a resume.'
+    hint='team8-ai: this session was resumed and its in-process teammates are gone. Before messaging any of them, run TaskList, set each in_progress task whose owner is gone back to pending, and respawn its track per team8-ai:run, After a resume.'
   fi
 fi
 
@@ -38,7 +38,7 @@ if [ -n "$mine" ] && [ -n "$(health_field ok)" ]; then
     # Word-split on purpose: recorded_flags prints one flag and one id.
     # shellcheck disable=SC2046
     start_console $(recorded_flags)
-    notice="team8 console updated to $mine"
+    notice="team8-ai console updated to $mine"
   fi
 fi
 

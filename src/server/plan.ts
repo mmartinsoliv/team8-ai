@@ -7,7 +7,7 @@ import { parsePlan, sectionOf } from '../../plugin/hooks/team';
 
 export { parsePlan, sectionOf };
 
-const PLAN_PATH = /\/docs\/team8\/plans\/[^/]+\.md$/;
+const PLAN_PATH = /\/docs\/team8-ai\/plans\/[^/]+\.md$/;
 type ToolUse = { type?: string; name?: string; input?: { file_path?: unknown } };
 
 /** The plan file one record writes or edits, if it writes one. */

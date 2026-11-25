@@ -26,14 +26,14 @@ export const AGENT_GATE_SCRIPT = path.join(PLUGIN_DIR, 'bin', 'agent-gate.sh');
 /** The bundled inbox-delivery hook, used by hookBlock(); matches plugin/hooks/hooks.json. */
 export const INBOX_DELIVER_SCRIPT = path.join(PLUGIN_DIR, 'dist', 'hooks', 'inbox-deliver.js');
 /** Where the user's own env values are stashed while the console owns them. */
-export const BACKUP_FILE = 'team8.backup.json';
+export const BACKUP_FILE = 'team8-ai.backup.json';
 // Earlier setups wrote this teammate prompt-cache TTL. The key is global, so
 // every subagent on the machine paid the 1-hour write price, and over 262
-// team8 teammates the warm re-reads it bought only broke even. Setup no longer
+// team8-ai teammates the warm re-reads it bought only broke even. Setup no longer
 // writes it; uninstall still removes it.
 export const SUBAGENT_PROMPT_CACHE_TTL = '1h';
 export const MODEL_FORCE_WARNING =
-  'CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 overrides every per-task model team8 assigns';
+  'CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 overrides every per-task model team8-ai assigns';
 
 // Agent teams are what this console exists to show, and the task tools are the
 // shared task list it renders. Neither can be turned on from a plugin manifest,
@@ -180,7 +180,7 @@ export function hookBlock(port: number): HookBlock {
     hooks: [{ type: 'command', command: `'${TASK_GATE_SCRIPT}'`, timeout: HOOK_TIMEOUT_SECONDS }],
   };
   // The agent gate keeps the isolation flag consistent across a session's
-  // named team8 spawns, so a reviewer in a subagents run cannot slip into the
+  // named team8-ai spawns, so a reviewer in a subagents run cannot slip into the
   // roster as a teammate. Matches hooks/hooks.json, after the task gate.
   const agentGate: HookEntry = {
     matcher: 'Agent',
@@ -376,7 +376,7 @@ export async function runSetup(opts: {
 
   // Warn, never change it: CLAUDE_CODE_SUBAGENT_MODEL_FORCE silently makes
   // Claude Code ignore the model named in the spawn prompt, which defeats
-  // team8's per-task model choice. Checked in both places it could be set.
+  // team8-ai's per-task model choice. Checked in both places it could be set.
   const settingsEnv = current.env as Record<string, unknown> | undefined;
   if (process.env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE === '1' || settingsEnv?.CLAUDE_CODE_SUBAGENT_MODEL_FORCE === '1') {
     lines.push(MODEL_FORCE_WARNING, '');

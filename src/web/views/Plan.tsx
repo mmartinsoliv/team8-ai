@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import type { PlanProgress } from '../../shared/domain';
 import { BAR, STRIP } from './Tasks';
 
-const PLANS_DIR = 'docs/team8/plans/';
+const PLANS_DIR = 'docs/team8-ai/plans/';
 
 const ROW: CSSProperties = {
   display: 'flex',

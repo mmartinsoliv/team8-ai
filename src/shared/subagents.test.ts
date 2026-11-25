@@ -184,7 +184,7 @@ describe('spawnsOf', () => {
           status: 'async_launched',
           taskType: 'local_workflow',
           runId: 'wf_920cc391-abe',
-          workflowName: 'team8-recon',
+          workflowName: 'team8-ai-recon',
         }),
       );
       expect(spawns.map((s) => s.name)).toEqual(['kept']);

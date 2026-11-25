@@ -28,7 +28,7 @@ const run = (over: Partial<WorkflowRun> = {}): WorkflowRun => ({
   runId: 'wf_c6178afd-453',
   status: 'completed',
   live: false,
-  name: 'team8-pipeline',
+  name: 'team8-ai-pipeline',
   startedAt: T0,
   durationMs: 600_000,
   logs: [],

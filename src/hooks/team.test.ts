@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { bar, consoleLink, elapsed, isDone, modeIn, progress, progressOf, skillIn, stageOf, type Task } from '../../plugin/hooks/team';
 
-const runLog = (content: string) => ({ file_path: '/repo/docs/team8/runs/2026-10-12-x.md', content });
+const runLog = (content: string) => ({ file_path: '/repo/docs/team8-ai/runs/2026-10-12-x.md', content });
 
 describe('modeIn', () => {
   it('reads the mode the lead wrote into a run log, by Write or by Edit', () => {
     expect(modeIn(runLog('- tasks: 3 · mode: subagents — one track'))).toBe('subagents');
-    expect(modeIn({ file_path: '/r/docs/team8/runs/a.md', old_string: 'x', new_string: '- mode: workflow — fan-out' })).toBe('workflow');
+    expect(modeIn({ file_path: '/r/docs/team8-ai/runs/a.md', old_string: 'x', new_string: '- mode: workflow — fan-out' })).toBe('workflow');
   });
 
   it('takes the last mode line in one write', () => {
@@ -16,7 +16,7 @@ describe('modeIn', () => {
   it('ignores the template, a retired mode, other files, logs with no mode and non-objects', () => {
     expect(modeIn(runLog('- tasks: <n> · mode: subagents | teammates | workflow — <reason>'))).toBeUndefined();
     expect(modeIn(runLog('mode: solo — an old batch'))).toBeUndefined();
-    expect(modeIn({ file_path: '/r/docs/team8/plans/p.md', content: 'mode: teammates — x' })).toBeUndefined();
+    expect(modeIn({ file_path: '/r/docs/team8-ai/plans/p.md', content: 'mode: teammates — x' })).toBeUndefined();
     expect(modeIn(runLog('## Brainstorm'))).toBeUndefined();
     expect(modeIn('mode: subagents — x')).toBeUndefined();
     expect(modeIn(undefined)).toBeUndefined();
@@ -25,22 +25,22 @@ describe('modeIn', () => {
 
 describe('skillIn', () => {
   it('reads a Skill call, a typed slash command and the transcript\'s command-name', () => {
-    expect(skillIn({ skill: 'team8:plan' })).toBe('plan');
-    expect(skillIn({ text: '/team8:tasks from LIN-12' })).toBe('tasks');
-    expect(skillIn({ text: '<command-message>run</command-message>\n<command-name>/team8:run</command-name>' })).toBe('run');
+    expect(skillIn({ skill: 'team8-ai:plan' })).toBe('plan');
+    expect(skillIn({ text: '/team8-ai:tasks from LIN-12' })).toBe('tasks');
+    expect(skillIn({ text: '<command-message>run</command-message>\n<command-name>/team8-ai:run</command-name>' })).toBe('run');
   });
 
   it('ignores a prompt that only mentions a skill, and other skills', () => {
-    expect(skillIn({ text: 'why did team8:plan skip the spec?' })).toBeUndefined();
+    expect(skillIn({ text: 'why did team8-ai:plan skip the spec?' })).toBeUndefined();
     expect(skillIn({ skill: 'superpowers:brainstorming' })).toBeUndefined();
-    expect(skillIn({ text: '/team8:console' })).toBeUndefined();
+    expect(skillIn({ text: '/team8-ai:console' })).toBeUndefined();
     expect(skillIn(undefined)).toBeUndefined();
   });
 });
 
 describe('stageOf', () => {
-  const plan = { role: 'assistant', toolUses: [{ input: { skill: 'team8:plan' } }] };
-  const planFile = { role: 'assistant', toolUses: [{ input: { file_path: '/r/docs/team8/plans/p.md', content: '# Plan' } }] };
+  const plan = { role: 'assistant', toolUses: [{ input: { skill: 'team8-ai:plan' } }] };
+  const planFile = { role: 'assistant', toolUses: [{ input: { file_path: '/r/docs/team8-ai/plans/p.md', content: '# Plan' } }] };
 
   it('walks spec, planning and the decided mode', () => {
     expect(stageOf([plan])).toEqual({ phase: 'spec' });
@@ -49,7 +49,7 @@ describe('stageOf', () => {
   });
 
   it('replays the plan text through its Write and each Edit, as the file has it', () => {
-    const planEdit = (input: object) => ({ role: 'assistant', toolUses: [{ input: { file_path: '/r/docs/team8/plans/p.md', ...input } }] });
+    const planEdit = (input: object) => ({ role: 'assistant', toolUses: [{ input: { file_path: '/r/docs/team8-ai/plans/p.md', ...input } }] });
     const skeleton = '### Task 1: A\n\n**Files:** `$1`\n\n### Task 2: B\n\n**Files:** `$1`\n';
     const steps = planEdit({ old_string: '### Task 1: A\n\n**Files:** `$1`\n', new_string: '### Task 1: A\n\n**Files:** `$1`\n\n- [ ] **Step 1: echo $&**\n' });
     const all = planEdit({ old_string: '`$1`', new_string: '`$2`', replace_all: true });
@@ -57,16 +57,16 @@ describe('stageOf', () => {
     expect(stageOf([plan, planEdit({ content: skeleton }), all]).plan).toBe('### Task 1: A\n\n**Files:** `$2`\n\n### Task 2: B\n\n**Files:** `$2`\n');
   });
 
-  it('reads a typed /team8:plan from a user message', () => {
-    expect(stageOf([{ role: 'user', text: '<command-name>/team8:plan</command-name>' }])).toEqual({ phase: 'spec' });
+  it('reads a typed /team8-ai:plan from a user message', () => {
+    expect(stageOf([{ role: 'user', text: '<command-name>/team8-ai:plan</command-name>' }])).toEqual({ phase: 'spec' });
   });
 
-  it('starts over at the next team8:plan, forgetting the last batch\'s mode', () => {
+  it('starts over at the next team8-ai:plan, forgetting the last batch\'s mode', () => {
     const decided = { role: 'assistant', toolUses: [{ input: runLog('mode: subagents — first') }] };
     expect(stageOf([decided, plan])).toEqual({ phase: 'spec' });
   });
 
-  it('is empty before team8 runs', () => {
+  it('is empty before team8-ai runs', () => {
     expect(stageOf([])).toEqual({});
     expect(stageOf([{ role: 'user', text: 'hi' }, { role: 'assistant', toolUses: [{ input: { command: 'ls' } }] }])).toEqual({});
   });

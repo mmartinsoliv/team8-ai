@@ -1,10 +1,10 @@
 ---
-description: Measure where a team8 batch's time went — model, tools, idle, message lag, review tails
+description: Measure where a team8-ai batch's time went — model, tools, idle, message lag, review tails
 allowed-tools: ["Bash"]
 argument-hint: "[session-id] [--since <ISO time>] [--json]"
 ---
 
-# team8 measure
+# team8-ai measure
 
 Run this and show its output as it is. A session id in the arguments measures that session instead of this one.
 

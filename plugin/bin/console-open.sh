@@ -1,5 +1,5 @@
 #!/bin/sh
-# What /team8:console runs:  console-open.sh <session-id>
+# What /team8-ai:console runs:  console-open.sh <session-id>
 # A ready console of the same or a newer build is switched to the session, and
 # every open tab follows it. A missing console, or an older one, is replaced by
 # this session's build, started on the session. With no tab open, one is
@@ -52,8 +52,8 @@ fi
 wait_ready
 
 if [ -z "$(health_field ok)" ]; then
-  echo "the console did not come up; last lines of $CLAUDE_DIR/team8.log:" >&2
-  tail -n 5 "$CLAUDE_DIR/team8.log" >&2 2>/dev/null
+  echo "the console did not come up; last lines of $CLAUDE_DIR/team8-ai.log:" >&2
+  tail -n 5 "$CLAUDE_DIR/team8-ai.log" >&2 2>/dev/null
   exit 1
 fi
 

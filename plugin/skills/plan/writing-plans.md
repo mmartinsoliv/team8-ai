@@ -6,11 +6,11 @@ Write comprehensive implementation plans assuming the engineer has zero context 
 
 Assume they are a skilled developer, but know almost nothing about our toolset or problem domain. Assume they don't know good test design very well.
 
-**Announce at start:** "I'm using team8:plan's writing-plans to create the implementation plan."
+**Announce at start:** "I'm using team8-ai:plan's writing-plans to create the implementation plan."
 
 **Context:** The batch branch is already checked out by the lead. Do not create branches or worktrees.
 
-**Save plans to:** `docs/team8/plans/YYYY-MM-DD-<feature-name>.md`
+**Save plans to:** `docs/team8-ai/plans/YYYY-MM-DD-<feature-name>.md`
 - (User preferences for plan location override this default)
 
 ## Scope Check
@@ -59,7 +59,7 @@ everything that can break it.
 ```markdown
 # [Feature Name] Implementation Plan
 
-> **For agentic workers:** this plan is executed by agents that `team8:run` dispatches from the shared task list. Read your own task section. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** this plan is executed by agents that `team8-ai:run` dispatches from the shared task list. Read your own task section. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** [One sentence describing what this builds]
 
@@ -155,7 +155,7 @@ If you find issues, fix them inline. No need to re-review — just fix and move 
 
 ## Writing in Pieces
 
-Everything above is how the plan is written. This is where team8 deviates:
+Everything above is how the plan is written. This is where team8-ai deviates:
 the plan is written where the user can watch it, and it ends as tasks on the
 shared list, not as an execution choice.
 
@@ -181,7 +181,7 @@ The self-review runs after the last task; the tasks come after it.
 The plan file carries the detail. The shared task list carries the delegation
 contract. Both are yours, written in the same pass, and they match one to one.
 
-**Tracks first.** `team8:run` hands each track to one worker, and tracks in
+**Tracks first.** `team8-ai:run` hands each track to one worker, and tracks in
 the same wave run at once — in one shared checkout or a worktree each — so
 isolation comes from file ownership and nothing else. Tracks are read off the
 finished plan; no task changes to make one. Group the plan's tasks into tracks
@@ -197,19 +197,19 @@ before creating them:
 - A verification task spans the tracks that can break it; one that checks a
   single task is that task's last steps (Task Right-Sizing).
 
-Invoke `team8:tasks` — its contract applies to every task. One `TaskCreate` per
+Invoke `team8-ai:tasks` — its contract applies to every task. One `TaskCreate` per
 plan task, same order, same subject. The description stands alone; it never
 points at a conversation. It carries:
 
 - the goal in one sentence
-- the plan path and the task number: "Read `docs/team8/plans/<file>.md`, Task N,
+- the plan path and the task number: "Read `docs/team8-ai/plans/<file>.md`, Task N,
   first — it is your requirements, with the exact values to use verbatim"
 - the track, the files this task owns, and the files it must not touch
 - the interfaces it consumes and produces, copied from the task section
 
 ```json
 {"subject": "Add the diff payload to the shared domain model",
- "description": "Goal: TranscriptLine carries an optional diff so later tasks can render it.\nRead docs/team8/plans/2026-09-11-diff-viewer.md, Task 1, first — it is your requirements, with the exact values to use verbatim.\nTrack A. You own src/shared/domain.ts and src/shared/domain.test.ts. Do not touch src/web/.\nProduces: `DiffPayload = { path: string; hunks: Hunk[] }`, exported from src/shared/domain.ts. Consumes: nothing.",
+ "description": "Goal: TranscriptLine carries an optional diff so later tasks can render it.\nRead docs/team8-ai/plans/2026-09-11-diff-viewer.md, Task 1, first — it is your requirements, with the exact values to use verbatim.\nTrack A. You own src/shared/domain.ts and src/shared/domain.test.ts. Do not touch src/web/.\nProduces: `DiffPayload = { path: string; hunks: Hunk[] }`, exported from src/shared/domain.ts. Consumes: nothing.",
  "metadata": {"complexity": "judgment", "model": "opus", "effort": "high",
               "why": "shape is a contract two later tasks consume"}}
 ```
@@ -219,6 +219,6 @@ task reads something the blocker produces — and its `metadata`
 `{ complexity, model, effort, why }`, sized by decisions required, not lines
 changed. A task missing `metadata` is not created.
 
-Then run the three checks `team8:tasks` runs before its closing: no file owned
+Then run the three checks `team8-ai:tasks` runs before its closing: no file owned
 by two tracks, every consumer blocked on its producer, and, in teammates
 mode, an owner on every task.

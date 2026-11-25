@@ -16,7 +16,7 @@ import { useAppearance } from '../state/useSettings';
  * transition.
  */
 
-/** The team8 mark at 112px: the no-theme seeker. Accent-500 body, accent-300 top-right pixel, as the handoff draws it. */
+/** The team8-ai mark at 112px: the no-theme seeker. Accent-500 body, accent-300 top-right pixel, as the handoff draws it. */
 const MARK_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" width="112" height="112" viewBox="0 0 12 12" shape-rendering="crispEdges" style="display:block">' +
   '<path d="M3 1h2v2h-2zM1 3h2v2h-2zM8 3h2v2h-2zM3 5h2v2h-2zM6 5h2v2h-2zM1 7h2v2h-2zM8 7h2v2h-2zM3 9h2v2h-2zM6 9h2v2h-2z" fill="var(--color-accent-500)"/>' +

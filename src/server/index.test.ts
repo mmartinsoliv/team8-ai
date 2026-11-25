@@ -122,7 +122,7 @@ describe('parseArgs', () => {
     expect(cli.port).toBe(4500);
     expect(cli.claudeHome).toBe('/tmp/fake-claude');
     expect(cli.settingsPath).toBe('/tmp/fake-claude/settings.json');
-    expect(cli.dbPath).toBe('/tmp/fake-claude/team8/events.db');
+    expect(cli.dbPath).toBe('/tmp/fake-claude/team8-ai/events.db');
   });
 
   it('reads --team, so the launcher can tell the server which team it announced', () => {
@@ -198,7 +198,7 @@ describe('discoverTeam', () => {
     const found = (await discoverTeam(teams(), sessions()))!;
     expect(found.teamName).toBe('session-98b0b4a7');
     expect(found.leadSessionId).toBe('98b0b4a7-3206-455b-aaf6-a5a81ad1e283');
-    expect(found.projectSlug).toBe('-Users-alanoliv-code-team8');
+    expect(found.projectSlug).toBe('-Users-alanoliv-code-team8-ai');
   });
 
   it('prefers a >=2-member team over a newer lead-only one — a lead-only team is not a team', async () => {
@@ -606,11 +606,11 @@ describe('listLive', () => {
     await fs.mkdir(path.join(sessionDir, 'workflows'), { recursive: true });
     await fs.writeFile(
       path.join(sessionDir, 'workflows', 'wf_abc123.json'),
-      JSON.stringify({ runId: 'wf_abc123', workflowName: 'team8-plan' }),
+      JSON.stringify({ runId: 'wf_abc123', workflowName: 'team8-ai-plan' }),
     );
     expect((await listLive(teams, sessions, projects, '')).rows[0].workflow).toEqual({
       runId: 'wf_abc123',
-      name: 'team8-plan',
+      name: 'team8-ai-plan',
       live: false,
     });
   });
@@ -695,8 +695,8 @@ describe('sessionProjectDir', () => {
   }
 
   it('resolves the directory from the cwd the session record carries', async () => {
-    const target = await makeSession('-Users-alanoliv-code-team8');
-    expect(await sessionProjectDir(path.join(dir, 'projects'), SESSION, '/Users/alanoliv/code/team8'))
+    const target = await makeSession('-Users-alanoliv-code-team8-ai');
+    expect(await sessionProjectDir(path.join(dir, 'projects'), SESSION, '/Users/alanoliv/code/team8-ai'))
       .toBe(target);
   });
 
@@ -711,7 +711,7 @@ describe('sessionProjectDir', () => {
   // transcript beside the slug, never a directory. Requiring the directory made
   // `/api/select-session` 404 for exactly the sessions the route serves.
   it('accepts a session that has only its transcript file, with no directory yet', async () => {
-    const slug = '-Users-alanoliv-code-team8';
+    const slug = '-Users-alanoliv-code-team8-ai';
     await fs.mkdir(path.join(dir, 'projects', slug), { recursive: true });
     await fs.writeFile(path.join(dir, 'projects', slug, `${SESSION}.jsonl`), '{}\n');
     expect(await sessionProjectDir(path.join(dir, 'projects'), SESSION)).toBe(
@@ -720,7 +720,7 @@ describe('sessionProjectDir', () => {
   });
 
   it('is null for a session with nothing on disk, and for no projects root at all', async () => {
-    await makeSession('-Users-alanoliv-code-team8');
+    await makeSession('-Users-alanoliv-code-team8-ai');
     expect(await sessionProjectDir(path.join(dir, 'projects'), 'not-a-session')).toBeNull();
     expect(await sessionProjectDir(path.join(dir, 'nowhere'), SESSION)).toBeNull();
   });

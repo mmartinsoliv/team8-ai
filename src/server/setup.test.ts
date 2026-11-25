@@ -285,7 +285,7 @@ describe("the plugin's own hooks.json", () => {
     });
 
     it.each([teammate, 'track-a@session-1'])('starts node for teammate %s and hands it the payload', (id) => {
-      const payload = postToolUse({ agent_id: id, agent_type: 'team8:executor' });
+      const payload = postToolUse({ agent_id: id, agent_type: 'team8-ai:executor' });
       expect(run(payload)).toEqual({ ...quiet, stdout: JSON.stringify(payload) });
     });
 

@@ -30,7 +30,7 @@ export async function poll($: EngineInterface) {
   }
 }
 
-// team8.tsx calls this from its session.start and poll from its own
+// team8-ai.tsx calls this from its session.start and poll from its own
 // turn.complete: the engine allows one unmatched hook per event in a module.
 export function start($: EngineInterface) {
   $.clock.every(POLL_MS, () => void poll($))

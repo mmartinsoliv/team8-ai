@@ -1,6 +1,6 @@
 ---
 name: reproduce
-description: Use when the work is a bug report whose root cause is not yet confirmed — a ticket, a Slack thread, an error trace, "X is broken", "it only happens sometimes" — before designing or planning a fix. Also when asked to reproduce, repro, confirm or re-test a reported bug, and when team8:plan receives a bug.
+description: Use when the work is a bug report whose root cause is not yet confirmed — a ticket, a Slack thread, an error trace, "X is broken", "it only happens sometimes" — before designing or planning a fix. Also when asked to reproduce, repro, confirm or re-test a reported bug, and when team8-ai:plan receives a bug.
 ---
 
 # Reproduce
@@ -15,7 +15,7 @@ the fix: **reproduced**, **not reproduced**, or **blocked**.
 name, somewhere the user agreed to.**
 
 **Not for:** a bug whose cause is already confirmed by a failing test. That
-goes straight to `team8:plan` as a bounded fix.
+goes straight to `team8-ai:plan` as a bounded fix.
 
 ## Steps
 
@@ -74,7 +74,7 @@ Next: <see below>
 `Not covered` is required unless the outcome is Reproduced.
 
 **Next:**
-- Reproduced: `team8:plan` designs the fix, with the failing test as its RED.
+- Reproduced: `team8-ai:plan` designs the fix, with the failing test as its RED.
 - Reproduced only on an older commit: name the commit that fixed it, and
   propose a regression test instead of a fix.
 - Not reproduced: name what would settle it, such as the reporter re-testing on

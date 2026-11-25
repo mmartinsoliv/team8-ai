@@ -1,12 +1,12 @@
 #!/bin/sh
-# PreToolUse gate on Agent. The isolation flag follows the mode (team8:run,
-# Modes): in subagents mode every named team8 spawn carries
+# PreToolUse gate on Agent. The isolation flag follows the mode (team8-ai:run,
+# Modes): in subagents mode every named team8-ai spawn carries
 # isolation "worktree", in teammates mode none does, and with agent teams on
 # the flag alone decides which one a named spawn becomes, with no error either
-# way. The session's first named team8 spawn fixes the mode in
-# $CLAUDE_CONFIG_DIR/team8/agent-mode-<session_id>; a later one whose flag
+# way. The session's first named team8-ai spawn fixes the mode in
+# $CLAUDE_CONFIG_DIR/team8-ai/agent-mode-<session_id>; a later one whose flag
 # disagrees is refused with the fix. A spawn with no name, or whose
-# subagent_type is not team8's, is not team8's and passes untouched.
+# subagent_type is not team8-ai's, is not team8-ai's and passes untouched.
 #
 # CONTRACT: exit 2 blocks the call and returns stderr to the model as the
 # reason, exit 0 allows it. A broken gate must never block work, so anything
@@ -18,12 +18,12 @@ payload=$(cat 2>/dev/null) || exit 0
 
 command -v jq >/dev/null 2>&1 || exit 0
 
-# "<session_id>|<name>|<mode>" for a named team8 spawn, nothing otherwise.
+# "<session_id>|<name>|<mode>" for a named team8-ai spawn, nothing otherwise.
 fields=$(printf '%s' "$payload" | jq -r '
   (.tool_input // {}) as $in
   | if .tool_name == "Agent"
       and (($in.name // "") | tostring) != ""
-      and (($in.subagent_type // "") | tostring | startswith("team8:"))
+      and (($in.subagent_type // "") | tostring | startswith("team8-ai:"))
     then "\(.session_id // "")|\($in.name)|\(if $in.isolation == "worktree" then "subagents" else "teammates" end)"
     else empty end
 ' 2>/dev/null) || exit 0
@@ -35,7 +35,7 @@ name=${rest%%|*}
 want=${rest#*|}
 case $session in ''|*[!A-Za-z0-9_-]*) exit 0 ;; esac
 
-dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/team8"
+dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/team8-ai"
 file="$dir/agent-mode-$session"
 have=''
 [ -f "$file" ] && have=$(cat "$file" 2>/dev/null)
@@ -48,8 +48,8 @@ fi
 [ "$have" = "$want" ] && exit 0
 
 if [ "$have" = subagents ]; then
-  echo "Agent \"$name\": this session runs team8 in subagents mode (its first named team8 spawn carried isolation \"worktree\"), so every named team8 spawn carries isolation: \"worktree\", reviewers included; without it this one would become a teammate. Add the flag and send the call again." >&2
+  echo "Agent \"$name\": this session runs team8-ai in subagents mode (its first named team8-ai spawn carried isolation \"worktree\"), so every named team8-ai spawn carries isolation: \"worktree\", reviewers included; without it this one would become a teammate. Add the flag and send the call again." >&2
 else
-  echo "Agent \"$name\": this session runs team8 in teammates mode (its first named team8 spawn carried no isolation), so no named team8 spawn carries isolation: \"worktree\"; with it this one would become a subagent outside the team. Drop the flag and send the call again." >&2
+  echo "Agent \"$name\": this session runs team8-ai in teammates mode (its first named team8-ai spawn carried no isolation), so no named team8-ai spawn carries isolation: \"worktree\"; with it this one would become a subagent outside the team. Drop the flag and send the call again." >&2
 fi
 exit 2

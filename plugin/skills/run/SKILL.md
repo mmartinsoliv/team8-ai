@@ -20,11 +20,11 @@ of hands, not an owner — and the lead becomes the bottleneck it was trying to 
 2. **Settle the branch shape and the terminal deliverable — once, before
    dispatching.** Both are yours to decide, not the user's to be asked. See below.
 3. **`TaskCreate` one task per item**, before any teammate exists.
-   **REQUIRED SUB-SKILL:** `team8:tasks` — what each
+   **REQUIRED SUB-SKILL:** `team8-ai:tasks` — what each
    task has to carry, and the model each one is worth.
-   If `team8:plan` already landed them, skip this step and its branch cut.
+   If `team8-ai:plan` already landed them, skip this step and its branch cut.
 4. **Take the mode from the first line of the task list's closing** — subagents,
-   teammates or workflow, per `team8:tasks` Mode. If no mode was stated, settle
+   teammates or workflow, per `team8-ai:tasks` Mode. If no mode was stated, settle
    it now as that Mode does — workflow read off the graph; between
    subagents and teammates ask, recommendation first — and say it in one line.
    A `mode: subagents` or `mode: teammates` line that does not say the user
@@ -37,7 +37,7 @@ of hands, not an owner — and the lead becomes the bottleneck it was trying to 
    to close are dispatch, relay and bookkeeping, and that you will say when the
    run is closed so they can set it back: a notice, not a question, so
    dispatch in the same turn. See Modes below. Teammates use the contract
-   below. Spawn each one under the name `team8:tasks` set as the owner of its
+   below. Spawn each one under the name `team8-ai:tasks` set as the owner of its
    track's tasks; with every task owned before the first spawn, Claude Code's
    own auto-claim finds nothing to take. A list that came without owners gets
    them now, before any spawn. Never set an owner after a spawn: it arrives as
@@ -58,8 +58,8 @@ of hands, not an owner — and the lead becomes the bottleneck it was trying to 
    start the full suite with `run_in_background` — the executors only ran the
    tests covering their own files; in subagents mode run it in each worktree,
    since each branch stands alone — and while the last reviews run, fill what
-   the Run section of `docs/team8/runs/<batch>.md` already knows (opened by
-   `team8:plan`; create it from that skill's template if this batch skipped
+   the Run section of `docs/team8-ai/runs/<batch>.md` already knows (opened by
+   `team8-ai:plan`; create it from that skill's template if this batch skipped
    `plan`). Once every track is clear, re-run the suite only if a fix landed
    after it started, run `measure`, finish the Run section and commit it on
    the branch. Then say in one line that the run is closed and `/effort` can
@@ -102,7 +102,7 @@ Opening a PR is outward-facing, so an agent will correctly refuse it by default 
 end at "committed on your branch." That default is right for a lone agent, and it is
 also the single most common way this workflow ends up half-finished.
 
-Running `team8:run` is the standing authorisation. **Default: the batch ends in an
+Running `team8-ai:run` is the standing authorisation. **Default: the batch ends in an
 open PR.** State it as a decision in the same line as the branch shape, then
 dispatch:
 
@@ -145,7 +145,7 @@ how to branch, how many PRs, whether to start.
 ## Modes
 
 The mode came from the closing — the user's answer for subagents or
-teammates, the graph for workflow (`team8:tasks` Mode). Each mode
+teammates, the graph for workflow (`team8-ai:tasks` Mode). Each mode
 ends the same way: the terminal deliverable from step 2b, the run log filled
 at close.
 
@@ -156,7 +156,7 @@ mailbox. Nothing errors either way. So in subagents mode every named spawn
 carries it — executors and reviewers alike — and in teammates mode none does.
 A reviewer is the spawn that gets this wrong: its step reads the same in both
 modes, so the flag has to come from the mode you are in, not from the step.
-A hook, `agent-gate.sh`, holds the line: the session's first named team8 spawn
+A hook, `agent-gate.sh`, holds the line: the session's first named team8-ai spawn
 fixes the mode, and a later one whose flag disagrees is refused with the fix.
 
 **subagents.** A worker per track, every track of the wave at once, each in a
@@ -183,7 +183,7 @@ on the other. A clear track's worktree goes with `git worktree remove <path>`
 
 **teammates.** The user's choice, at any peak. Dispatch by wave, from the closing's
 wave lines: every track in wave 1 now, one teammate each; each later wave
-when the tasks it waits on close, fresh teammates. A team8 unblock notice
+when the tasks it waits on close, fresh teammates. A team8-ai unblock notice
 says when: it names each unblocked task whose owner is idle or not running;
 message an idle owner, and spawn one that is not running under the name its
 tasks carry. A teammate whose track is clear stops. **N per wave = the
@@ -261,7 +261,7 @@ plan reviewer, and the executor stays alive until its track is clear.
    the two reads. A teammate with tasks in a later wave goes on to its next task
    while this wave is reviewed; a track of one wave is reviewed once, at its
    end. Never hand a reviewer the diff inline.
-2. **Dispatch a reviewer** (`subagent_type: "team8:reviewer"`, whose definition
+2. **Dispatch a reviewer** (`subagent_type: "team8-ai:reviewer"`, whose definition
    runs at high effort and carries no Edit or Write, so read-only is enforced;
    in subagents mode with `isolation: "worktree"`, since the flag follows the
    mode — Modes above),
@@ -300,9 +300,9 @@ plan reviewer, and the executor stays alive until its track is clear.
 ## The Dispatch Contract
 
 Spawn every executor from the definition that matches its task's `effort`:
-`team8:executor-low` for low, `team8:executor` for medium, `team8:executor-high`
-for high, and `team8:executor-xhigh` for xhigh or max. Spawn every reviewer as
-`subagent_type: "team8:reviewer"`, which runs at high. The Agent tool's `effort`
+`team8-ai:executor-low` for low, `team8-ai:executor` for medium, `team8-ai:executor-high`
+for high, and `team8-ai:executor-xhigh` for xhigh or max. Spawn every reviewer as
+`subagent_type: "team8-ai:reviewer"`, which runs at high. The Agent tool's `effort`
 parameter never reaches a teammate (Claude Code 2.1.296 drops it on a named
 spawn), and an agent whose definition sets no `effort` inherits the lead's
 `/effort`, so the definition is the only way a task's effort reaches its agent.
@@ -333,8 +333,8 @@ Every dispatch prompt has these seven parts, in this order. Parts 1, 2, 4, 5 and
 2. **The goal.** The done state in one sentence — not a list of steps.
 3. **Skills.** "Check your available skills before you start and use what fits.
    If the shape of the work is unsettled, ask the lead before writing code. If
-   you are writing code, `team8:test-driven-development`. Before you claim
-   done, `team8:verification-before-completion`."
+   you are writing code, `team8-ai:test-driven-development`. Before you claim
+   done, `team8-ai:verification-before-completion`."
 4. **Scope.** Files you own, files that are off limits, who else is live where.
 5. **Verification.** The exact commands, and paste the output. Only the tests
    covering the files it owns — never the whole suite, which costs a track its
@@ -374,7 +374,7 @@ Every dispatch prompt has these seven parts, in this order. Parts 1, 2, 4, 5 and
 
 ## The Run Log at Close
 
-The Run section of `docs/team8/runs/<batch>.md` takes one line per executor
+The Run section of `docs/team8-ai/runs/<batch>.md` takes one line per executor
 (name, model, effort, track); one for the lead, with its calls and cost from
 its row in `measure`'s Agents table and each effort it ran at, so a lead that
 switched to medium mid-run lists both

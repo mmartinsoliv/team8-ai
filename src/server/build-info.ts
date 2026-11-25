@@ -23,14 +23,14 @@ export function pluginRootOf(entry: string): string {
   return path.basename(up) === 'dist' ? path.dirname(up) : path.resolve(up, '..', 'plugin');
 }
 
-/** The newest team8 version installed_plugins.json lists, under any marketplace. */
+/** The newest team8-ai version installed_plugins.json lists, under any marketplace. */
 export async function installedVersion(claudeHome: string): Promise<string | undefined> {
   const doc = await readJsonSafe<{ plugins?: Record<string, unknown> }>(
     path.join(claudeHome, 'plugins', 'installed_plugins.json'),
   );
   let newest: string | undefined;
   for (const [key, installs] of Object.entries(doc?.plugins ?? {})) {
-    if (!key.startsWith('team8@') || !Array.isArray(installs)) continue;
+    if (!key.startsWith('team8-ai@') || !Array.isArray(installs)) continue;
     for (const install of installs as { version?: unknown }[]) {
       const v = install?.version;
       if (typeof v === 'string' && (newest === undefined || isOlderBuild(newest, v))) newest = v;

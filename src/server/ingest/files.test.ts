@@ -22,7 +22,7 @@ import type { Agent, WorkflowRun } from '../../shared/domain';
 import type { RosterPayload, TranscriptPayload, TaskPayload, MailPayload } from '../project';
 
 const FIXTURES = path.resolve(process.cwd(), 'fixtures');
-const SLUG = '-Users-alanoliv-code-team8';
+const SLUG = '-Users-alanoliv-code-team8-ai';
 const TEAM = 'session-98b0b4a7';
 const LEAD_SESSION = '98b0b4a7-3206-455b-aaf6-a5a81ad1e283';
 
@@ -2395,7 +2395,7 @@ describe('tmux-backend teammates', () => {
     },
   });
   // The real file opens with settings records that name nobody.
-  const settings = () => ({ type: 'agent-setting', agentSetting: 'team8:executor', sessionId: MATE_SESSION });
+  const settings = () => ({ type: 'agent-setting', agentSetting: 'team8-ai:executor', sessionId: MATE_SESSION });
   const tagged = (rec: TranscriptRecord, teamName: string) => ({ ...rec, agentName: MATE, teamName });
 
   const write = async (file: string, records: unknown[]) => {
@@ -2421,7 +2421,7 @@ describe('tmux-backend teammates', () => {
     config.members.push({
       agentId: `${MATE}@${TEAM}`,
       name: MATE,
-      agentType: 'team8:executor',
+      agentType: 'team8-ai:executor',
       model: 'opus',
       backendType: 'tmux',
       tmuxPaneId: '%0',

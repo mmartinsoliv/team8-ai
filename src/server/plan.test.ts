@@ -95,19 +95,19 @@ describe('sectionOf', () => {
 describe('planPathOf', () => {
   it('takes the newest plan file the lead wrote or edited', () => {
     const events = [
-      toolCall('team-lead', 'Write', '/r/docs/team8/plans/a.md', 1),
+      toolCall('team-lead', 'Write', '/r/docs/team8-ai/plans/a.md', 1),
       toolCall('team-lead', 'Edit', '/r/src/x.ts', 2),
-      toolCall('team-lead', 'Edit', '/r/docs/team8/plans/b.md', 3),
+      toolCall('team-lead', 'Edit', '/r/docs/team8-ai/plans/b.md', 3),
     ];
-    expect(planPathOf(events, 'team-lead')).toBe('/r/docs/team8/plans/b.md');
+    expect(planPathOf(events, 'team-lead')).toBe('/r/docs/team8-ai/plans/b.md');
   });
 
   it('ignores other agents, reads, specs and nested folders', () => {
     const events = [
-      toolCall('planner', 'Write', '/r/docs/team8/plans/theirs.md', 1),
-      toolCall('team-lead', 'Read', '/r/docs/team8/plans/read.md', 2),
-      toolCall('team-lead', 'Write', '/r/docs/team8/specs/s-design.md', 3),
-      toolCall('team-lead', 'Write', '/r/docs/team8/plans/old/x.md', 4),
+      toolCall('planner', 'Write', '/r/docs/team8-ai/plans/theirs.md', 1),
+      toolCall('team-lead', 'Read', '/r/docs/team8-ai/plans/read.md', 2),
+      toolCall('team-lead', 'Write', '/r/docs/team8-ai/specs/s-design.md', 3),
+      toolCall('team-lead', 'Write', '/r/docs/team8-ai/plans/old/x.md', 4),
     ];
     expect(planPathOf(events, 'team-lead')).toBeUndefined();
   });
@@ -119,8 +119,8 @@ describe('createPlanReader', () => {
 
   beforeEach(() => {
     dir = mkdtempSync(path.join(os.tmpdir(), 'plan-'));
-    mkdirSync(path.join(dir, 'docs', 'team8', 'plans'), { recursive: true });
-    file = path.join(dir, 'docs', 'team8', 'plans', '2026-09-13-thing.md');
+    mkdirSync(path.join(dir, 'docs', 'team8-ai', 'plans'), { recursive: true });
+    file = path.join(dir, 'docs', 'team8-ai', 'plans', '2026-09-13-thing.md');
     writeFileSync(file, PLAN);
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));

@@ -386,8 +386,8 @@ describe('transcript retention', () => {
       message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_${of}`, content: 'ok' }] },
     });
     const first = [
-      call('plan', 'Write', { file_path: '/repo/docs/team8/plans/2026-08-27-x.md', content: '# Plan' }),
-      call('dispatch', 'Agent', { name: 'app', subagent_type: 'team8:executor', prompt: 'go' }),
+      call('plan', 'Write', { file_path: '/repo/docs/team8-ai/plans/2026-08-27-x.md', content: '# Plan' }),
+      call('dispatch', 'Agent', { name: 'app', subagent_type: 'team8-ai:executor', prompt: 'go' }),
       answer('result', 'dispatch'),
       call('other-write', 'Write', { file_path: '/repo/src/x.ts', content: '' }),
       call('other-call', 'Bash', { command: 'ls' }),

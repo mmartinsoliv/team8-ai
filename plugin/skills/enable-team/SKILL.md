@@ -1,6 +1,6 @@
 ---
 name: enable-team
-description: Use when the user wants to enable or disable Claude Code agent teams and the shared task-list tools together — e.g. "/team8:enable-team true", "/team8:enable-team false", "turn on agent teams", "disable teammates and todo tools".
+description: Use when the user wants to enable or disable Claude Code agent teams and the shared task-list tools together — e.g. "/team8-ai:enable-team true", "/team8-ai:enable-team false", "turn on agent teams", "disable teammates and todo tools".
 ---
 
 # Toggle Agent Teams + Task Tools

@@ -683,7 +683,7 @@ describe('push -> pull wiring', () => {
       const url = await boot(home);
       await sessionsOf(url);
       expect(await waitForLine(url, AGENT, 'read once', Date.now() + 5000)).toBe(true);
-      const log = path.join(home, 'team8', 'logs', `${TEAM}.jsonl`);
+      const log = path.join(home, 'team8-ai', 'logs', `${TEAM}.jsonl`);
       const transcriptEvents = async () =>
         ((await fs.readFile(log, 'utf8')).match(/"kind":"transcript"/g) ?? []).length;
       const before = await transcriptEvents();
@@ -777,7 +777,7 @@ describe('workflow mode on the wire', () => {
 describe('the plan on the wire', () => {
   it('publishes the plan a session without a team is writing, and serves one task of it', async () => {
     home = await layout();
-    const planFile = path.join(home, 'repo', 'docs', 'team8', 'plans', '2026-09-13-thing.md');
+    const planFile = path.join(home, 'repo', 'docs', 'team8-ai', 'plans', '2026-09-13-thing.md');
     await fs.mkdir(path.dirname(planFile), { recursive: true });
     await fs.writeFile(
       planFile,
@@ -861,7 +861,7 @@ describe('which team a console boots onto', () => {
 
   /** Polls until the record names `watching`, so an earlier record on disk cannot pass for it. */
   async function readRecord(dir: string, port: number, watching: unknown): Promise<{ port: number; watching: unknown }> {
-    const file = path.join(dir, 'team8', `console-${port}.json`);
+    const file = path.join(dir, 'team8-ai', `console-${port}.json`);
     const until = Date.now() + 2000;
     for (;;) {
       try {
@@ -906,7 +906,7 @@ describe('which team a console boots onto', () => {
   it('a second console on a taken port exits without touching the team log', async () => {
     home = await layout();
     const url = await boot(home);
-    const log = path.join(home, 'team8', 'logs', `${TEAM}.jsonl`);
+    const log = path.join(home, 'team8-ai', 'logs', `${TEAM}.jsonl`);
     const before = await fs.readFile(log, 'utf8');
 
     const code = await new Promise<number | null>((resolve) => {
@@ -1056,7 +1056,7 @@ describe('which team a console boots onto', () => {
   it('a console that fails while starting exits instead of holding the port', async () => {
     const dir = await emptyHome();
     // A file where the store's directory belongs, so opening the store throws.
-    await fs.writeFile(path.join(dir, 'team8'), 'not a directory');
+    await fs.writeFile(path.join(dir, 'team8-ai'), 'not a directory');
 
     const code = await new Promise<number | null>((resolve) => {
       spawn(process.execPath, [TSX, ENTRY, '--claude-home', dir, '--port', '0'], { stdio: 'ignore' }).on('exit', resolve);

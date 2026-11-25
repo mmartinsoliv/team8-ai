@@ -1,11 +1,11 @@
 // The band's rules, kept free of Claude Code imports so vitest and the repo's
-// typecheck can load them; team8.tsx is the module around them.
+// typecheck can load them; team8-ai.tsx is the module around them.
 // No relative imports either: Claude Code wants `./x.ts`, which tsc refuses.
 
 export type Task = { id: string; status: string };
 export type Mode = 'subagents' | 'teammates' | 'workflow';
 
-const RUN_LOG = 'docs/team8/runs/';
+const RUN_LOG = 'docs/team8-ai/runs/';
 // The console's rule (src/server/index.ts, lastDecidedMode): the dash after the
 // word tells a filled run log from the template's `mode: subagents | teammates …`.
 const DECIDED = /mode: (subagents|teammates|workflow) —/g;
@@ -26,10 +26,10 @@ export type Phase = 'spec' | 'planning';
 // `plan` is the plan file's text, replayed from the lead's Write and each Edit.
 export type Stage = { phase?: Phase; mode?: Mode; plan?: string };
 
-// A Skill call's `skill`, a typed `/team8:plan`, or the `<command-name>` the
+// A Skill call's `skill`, a typed `/team8-ai:plan`, or the `<command-name>` the
 // transcript keeps for it; a prompt that only mentions a skill starts nothing.
-const SKILL = /(?:^\/?|<command-name>\/)team8:(plan|tasks|run)\b/;
-const PLANS = 'docs/team8/plans/';
+const SKILL = /(?:^\/?|<command-name>\/)team8-ai:(plan|tasks|run)\b/;
+const PLANS = 'docs/team8-ai/plans/';
 
 export function skillIn(input: unknown): string | undefined {
   if (!input || typeof input !== 'object') return undefined;
@@ -48,8 +48,8 @@ function planAfter(plan: string | undefined, input: Record<string, unknown>): st
   return replace_all ? plan.split(old_string).join(new_string) : plan.replace(old_string, () => new_string);
 }
 
-// team8:plan opens a new batch at the spec; the plan file, or a straight
-// team8:tasks or team8:run, is planning; the run log's mode outranks both.
+// team8-ai:plan opens a new batch at the spec; the plan file, or a straight
+// team8-ai:tasks or team8-ai:run, is planning; the run log's mode outranks both.
 export function stageAfter(stage: Stage, input: unknown): Stage {
   const skill = skillIn(input);
   if (skill === 'plan') return { phase: 'spec' };
@@ -128,7 +128,7 @@ export function sectionOf(text: string, n: number): string | undefined {
   return lines.slice(start, next === -1 ? lines.length : next).join('\n').trimEnd();
 }
 
-// Until team8:tasks puts tasks on the list, the plan's written tasks are the progress.
+// Until team8-ai:tasks puts tasks on the list, the plan's written tasks are the progress.
 export function progressOf(stage: Stage, tasks: readonly Task[]): Progress {
   if (tasks.length > 0 || !stage.plan) return progress(tasks);
   const written = parsePlan(stage.plan);

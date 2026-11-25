@@ -9,10 +9,10 @@ Running more than one Claude Code session at a time means tabbing between
 terminals: one window per teammate, another for the workflow, another for
 whatever you started solo. Coordinating a team that way is worse than running
 one agent alone: nothing tells you who's burning context, who's blocked, or
-what's waiting on you, until you go look. Team8 is the cockpit for a team's
+what's waiting on you, until you go look. Team8 AI is the cockpit for a team's
 actual state, in one screen.
 
-<img src="docs/demo.gif" alt="team8 demo" />
+<img src="docs/demo.gif" alt="team8-ai demo" />
 
 It starts itself the moment Claude spawns a team or a workflow, nothing to run
 by hand. From there, the switcher in the header lists every other session on the
@@ -22,10 +22,10 @@ the browser.
 ## Native Claude Code, on one screen
 
 None of this is new capability. Agent teams, subagents, workflows and the shared
-task list are all native to Claude Code. Team8 just gives what's already
+task list are all native to Claude Code. Team8 AI just gives what's already
 happening a shared screen.
 
-Every teammate keeps its own conversation and transcript, team8 just puts them
+Every teammate keeps its own conversation and transcript, team8-ai just puts them
 side by side. Every task carries a model tier (`opus`, `sonnet` or `haiku`) and
 an effort sized to the work by whoever created it, plus real `blockedBy`
 dependencies, so finishing one task unblocks whatever was waiting on it. The
@@ -142,22 +142,22 @@ no comms and no composer, just the run.
 Three steps on a new machine, then restart:
 
 ```bash
-claude plugin marketplace add alan-oliv/team8
-claude plugin install team8@team8
+claude plugin marketplace add alan-oliv/team8-ai
+claude plugin install team8-ai@team8-ai
 # then, inside Claude Code:
-/team8:setup
+/team8-ai:setup
 ```
 
-`/team8:setup` is namespaced to the plugin on purpose, the bare `/setup` works
-too until some other plugin also ships one. Same reasoning as `/team8:console`
+`/team8-ai:setup` is namespaced to the plugin on purpose, the bare `/setup` works
+too until some other plugin also ships one. Same reasoning as `/team8-ai:console`
 below.
 
 Needs Node 22+ and `curl`, which you already have if Claude Code runs, on
 macOS or Linux. The console needs Claude Code `2.1.231` or newer: agent
-teams are experimental, and the files team8 reads can change shape between
+teams are experimental, and the files team8-ai reads can change shape between
 releases. On an older version it still runs, but warns at startup.
 
-`/team8:setup` writes the one thing a plugin has nowhere to put: the `env`
+`/team8-ai:setup` writes the one thing a plugin has nowhere to put: the `env`
 vars that turn on agent teams (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`) and
 the task list (`CLAUDE_CODE_ENABLE_TODO_TOOLS`), one list shared by the whole
 team, each entry claimed and closed by whichever teammate picks it up. The
@@ -169,8 +169,8 @@ writes anything.
 
 Restart Claude Code afterwards: `env` is read once at session start.
 
-Open it any time with `/team8:console` (`/console` also works, same as
-`/team8:setup` above): it opens the console on the session you run it from,
+Open it any time with `/team8-ai:console` (`/console` also works, same as
+`/team8-ai:setup` above): it opens the console on the session you run it from,
 starting or upgrading it only when needed. The URL is
 `http://127.0.0.1:4823/s/<session id>`. A tab on that URL always shows that
 session: the first one open holds the console, and a tab opened on another
@@ -180,11 +180,11 @@ hands it the console. A tab on the bare URL follows whatever the console shows.
 ## Updating
 
 ```bash
-claude plugin update team8@team8
+claude plugin update team8-ai@team8-ai
 ```
 
 The next session you start replaces a console running an older build, on
-whatever it was showing, and `/team8:console` does the same from the session
+whatever it was showing, and `/team8-ai:console` does the same from the session
 you are in. Replacing it loses nothing: the console rebuilds its screen from
 its own log. The header shows which build serves, amber when a newer one is
 installed.
@@ -201,7 +201,7 @@ inboxes and the task list.
 A hook that finds no console running exits 0 and gets out of the way. The
 console never shuts itself down, so if it crashed or was killed, the next
 hook brings it back on whatever it was showing. One that has never run on
-this machine is left alone until a team, a workflow or `/team8:console`
+this machine is left alone until a team, a workflow or `/team8-ai:console`
 starts it.
 
 The server binds to localhost only and rejects requests from other origins,
@@ -214,54 +214,54 @@ $0.005 a run).
 
 Five skills fire on their own, when the work calls for them.
 
-`team8:plan` takes an idea to an approved spec with you, then writes the plan
+`team8-ai:plan` takes an idea to an approved spec with you, then writes the plan
 in the same session, a task at a time, with a progress line after each and a
 `plan` tab in the console that fills in as it goes. What comes back to you is
 the task table and a file path, and the run starts in the same turn.
-`/team8:plan --skip-reviews <request>` takes every recommended answer itself
+`/team8-ai:plan --skip-reviews <request>` takes every recommended answer itself
 and stops only to ask the mode.
 
-`team8:reproduce` takes a bug report to reproduced, not reproduced or blocked
+`team8-ai:reproduce` takes a bug report to reproduced, not reproduced or blocked
 before anyone designs a fix. It reads every attachment first, asks before it
 touches production, and records each browser repro as a video from a script
 you can re-run after the fix.
 
-`team8:tasks` sets the contract a task needs before it's handed off: a
+`team8-ai:tasks` sets the contract a task needs before it's handed off: a
 description that stands alone, real `blockedBy` dependencies, and a
 `model`/`effort` sized to the work. If tickets arrive without a plan, it first
 checks whether each one has enough to go straight to a PR, and sends any that
-don't through `team8:plan` on their own.
+don't through `team8-ai:plan` on their own.
 
-`team8:run` turns settled work into tasks and teammates: how many teammates,
+`team8-ai:run` turns settled work into tasks and teammates: how many teammates,
 the dispatch contract, and the branch shape the dependency graph implies.
 
-`team8:multiple-code-reviews` reviews a batch of pull requests with one
+`team8-ai:multiple-code-reviews` reviews a batch of pull requests with one
 teammate per PR, then lets you pick which comments go out on each PR and
 whether to approve, comment, request changes or post nothing. On your own PRs
 the findings you pick get fixed and pushed instead.
 
 A sixth is a plain toggle. Claude doesn't reach for it on its own, you call it
-by name: `/team8:enable-team true` or `/team8:enable-team false` flips the
-same two `env` vars `/team8:setup` writes.
+by name: `/team8-ai:enable-team true` or `/team8-ai:enable-team false` flips the
+same two `env` vars `/team8-ai:setup` writes.
 
 Don't want Claude reaching for one of these on its own? Turn it off per skill,
 no plugin changes needed, in `~/.claude/settings.json` (or the project's
 `.claude/settings.json`):
 
 ```json
-{ "skillOverrides": { "team8:tasks": "off" } }
+{ "skillOverrides": { "team8-ai:tasks": "off" } }
 ```
 
 `off` hides it entirely, `user-invocable-only` keeps it reachable by name
-(`/team8:tasks`) but out of Claude's own judgement.
+(`/team8-ai:tasks`) but out of Claude's own judgement.
 
 ## Uninstall
 
 ```bash
 # inside Claude Code, while the plugin is still installed:
-/team8:enable-team false
+/team8-ai:enable-team false
 # then:
-claude plugin uninstall team8@team8
+claude plugin uninstall team8-ai@team8-ai
 ```
 
 That turns agent teams and the task list back off and removes the hooks and

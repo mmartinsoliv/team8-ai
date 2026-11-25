@@ -10,7 +10,7 @@ afterEach(() => {
 });
 
 const PLAN: PlanProgress = {
-  path: '/Users/me/code/app/docs/team8/plans/2026-09-13-thing.md',
+  path: '/Users/me/code/app/docs/team8-ai/plans/2026-09-13-thing.md',
   mtime: 1000,
   tasks: [
     { n: 1, title: 'Add the type', written: true },
@@ -32,7 +32,7 @@ it('shows how much of the plan is written', () => {
   expect(screen.getByTestId('plan-pct').textContent).toBe('33%');
   expect(screen.getByTestId('plan-count').textContent).toBe('1 of 3 tasks written');
   expect(screen.getByTestId('plan-bar').style.width).toBe(`${(1 / 3) * 100}%`);
-  expect(screen.getByTestId('plan-path').textContent).toBe('docs/team8/plans/2026-09-13-thing.md');
+  expect(screen.getByTestId('plan-path').textContent).toBe('docs/team8-ai/plans/2026-09-13-thing.md');
 });
 
 it('marks each task written or outlined', () => {

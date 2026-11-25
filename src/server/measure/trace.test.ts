@@ -86,7 +86,7 @@ describe('readTrace', () => {
         timestamp: at(7),
         attachment: {
           type: 'hook_additional_context',
-          content: ['Messages that reached you mid-turn (team8 delivered them early; they will not repeat at the end of your turn):\n<teammate-message teammate_id="team-lead" summary="x">\nFix the header, please.\n</teammate-message>'],
+          content: ['Messages that reached you mid-turn (team8-ai delivered them early; they will not repeat at the end of your turn):\n<teammate-message teammate_id="team-lead" summary="x">\nFix the header, please.\n</teammate-message>'],
         },
       }),
       JSON.stringify({ type: 'attachment', timestamp: at(8), attachment: { type: 'hook_additional_context', content: ['PONYTAIL MODE ACTIVE'] } }),

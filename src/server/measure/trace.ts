@@ -67,7 +67,7 @@ export function readTrace(name: string, role: Role, lines: string[]): AgentTrace
     trace.lastAt = Math.max(trace.lastAt, at);
 
     if (r.type === 'attachment') {
-      // team8's inbox hook hands a busy teammate its messages as injected context; those are deliveries too.
+      // team8-ai's inbox hook hands a busy teammate its messages as injected context; those are deliveries too.
       const a = (r as { attachment?: { type?: string; content?: unknown } }).attachment;
       if (a?.type !== 'hook_additional_context') return;
       for (const text of Array.isArray(a.content) ? a.content : [a.content]) {

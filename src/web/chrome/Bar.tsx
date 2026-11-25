@@ -88,8 +88,8 @@ export function BuildChip({ build }: { build: BuildInfo }) {
       data-stale={build.stale}
       title={
         build.stale
-          ? `${build.installed} is installed; the next new session or /team8:console switches to it`
-          : `team8 ${label}`
+          ? `${build.installed} is installed; the next new session or /team8-ai:console switches to it`
+          : `team8-ai ${label}`
       }
       style={{ ...METRIC, fontSize: 11, color: build.stale ? 'var(--warn)' : 'var(--color-neutral-600)' }}
     >

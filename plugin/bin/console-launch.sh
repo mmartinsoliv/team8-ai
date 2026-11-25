@@ -1,5 +1,5 @@
 #!/bin/sh
-# Pre/PostToolUse(Agent) launcher for the Team8.
+# Pre/PostToolUse(Agent) launcher for the Team8 AI.
 #
 # CONTRACT: PreToolUse BLOCKS the tool call, so this must never emit a
 # permissionDecision and must always exit 0 — a broken console must never
@@ -233,7 +233,7 @@ fi
 # directory there for a team that may never exist would be a phantom entry
 # in the user's real config. markerdir is ours alone, so it is always safe
 # to create.
-markerdir="$CLAUDE_DIR/team8/announced"
+markerdir="$CLAUDE_DIR/team8-ai/announced"
 # Keyed by the session when the team has no name yet, so "once per team" still
 # holds across the PreToolUse/PostToolUse pair of a team's very first spawn.
 marker="$markerdir/${team:-session-$short}"
@@ -244,8 +244,8 @@ mkdir -p "$markerdir" 2>/dev/null
 if [ "$workflow" = 1 ]; then
   printf '{"systemMessage":"Workflow console → http://127.0.0.1:%s/s/%s"}\n' "$PORT" "$session"
 elif [ -n "$team" ]; then
-  printf '{"systemMessage":"team8 → http://127.0.0.1:%s/?team=%s"}\n' "$PORT" "$team"
+  printf '{"systemMessage":"team8-ai → http://127.0.0.1:%s/?team=%s"}\n' "$PORT" "$team"
 else
-  printf '{"systemMessage":"team8 → http://127.0.0.1:%s/"}\n' "$PORT"
+  printf '{"systemMessage":"team8-ai → http://127.0.0.1:%s/"}\n' "$PORT"
 fi
 exit 0

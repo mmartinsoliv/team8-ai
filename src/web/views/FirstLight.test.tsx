@@ -37,7 +37,7 @@ it('names the lead by character and fills the theme copy', () => {
   );
 });
 
-it('says "lead" and draws the still team8 mark with no theme', () => {
+it('says "lead" and draws the still team8-ai mark with no theme', () => {
   mount(null);
   expect(screen.getByTestId('first-light-head').textContent).toBe('lead is here. Nobody else yet.');
   const svg = screen.getByTestId('seeker').querySelector('svg')!;

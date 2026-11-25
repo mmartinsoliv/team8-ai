@@ -14,7 +14,7 @@ The plugin registers **all ten observation hooks itself**, in its own
 `hooks/hooks.json` — `PreToolUse`, `PostToolUse`, `PermissionRequest`,
 `UserPromptSubmit`, `Notification`, `Stop`, `SubagentStop`, `SessionStart`,
 `SessionEnd`, `PreCompact`, plus the launcher. It also registers the task gate,
-a PreToolUse hook on `TaskCreate` and `TaskUpdate` that requires a team8 task's
+a PreToolUse hook on `TaskCreate` and `TaskUpdate` that requires a team8-ai task's
 metadata and a teammate's verification. Its own `settings.json` carries the
 `subagentStatusLine` that feeds each teammate's current tool to the console.
 **Do not add any of them here.** They fire from the plugin; a copy in
@@ -29,7 +29,7 @@ It MERGES, and it never overwrites: whatever is already in that file stays.
 
 If `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` is `"1"` anywhere — the process env or this
 settings file's `env` — say so and leave it: it silently overrides every
-per-task model team8 assigns. And note for the operator that a `claude -p`
+per-task model team8-ai assigns. And note for the operator that a `claude -p`
 session never spawns teammates, so its briefs come back to them as subagents instead.
 
 Setting them in `settings.json` rather than a shell profile is deliberate: it is
@@ -42,15 +42,15 @@ profile.
 ```bash
 claude --version                                      # console needs 2.1.231 or newer
 node --version                                        # 22 or newer
-claude plugin list 2>/dev/null | grep -A3 team8 || echo 'PLUGIN MISSING'
+claude plugin list 2>/dev/null | grep -A3 team8-ai || echo 'PLUGIN MISSING'
 ```
 
 If the plugin is missing, **stop and install it first** — the hooks live inside it
 and this command does not write them:
 
 ```bash
-claude plugin marketplace add alan-oliv/team8
-claude plugin install team8@team8
+claude plugin marketplace add alan-oliv/team8-ai
+claude plugin install team8-ai@team8-ai
 ```
 
 If `claude --version` is older than 2.1.231, say so and carry on: the console reads
@@ -73,7 +73,7 @@ Note three things before going further:
   line. Leave it, and say so in the report.
 - Is `subagentPromptCacheTtl` `"1h"`? An earlier version of this command wrote
   it. It makes every subagent on the machine pay the 1-hour cache-write price,
-  for a gain that measured break-even for team8's teammates. Offer to remove it.
+  for a gain that measured break-even for team8-ai's teammates. Offer to remove it.
 
 ## 2. Say what you will change, then wait
 
