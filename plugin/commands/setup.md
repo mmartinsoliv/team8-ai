@@ -49,7 +49,7 @@ If the plugin is missing, **stop and install it first** — the hooks live insid
 and this command does not write them:
 
 ```bash
-claude plugin marketplace add alan-oliv/team8-ai
+claude plugin marketplace add mmartinsoliv/team8-ai
 claude plugin install team8-ai@team8-ai
 ```
 

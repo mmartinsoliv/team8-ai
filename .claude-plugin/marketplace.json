@@ -2,8 +2,7 @@
   "name": "team8-ai",
   "description": "The team8-ai plugin.",
   "owner": {
-    "name": "alan-oliv",
-    "email": "alanbruno@gmail.com"
+    "name": "mmartinsoliv"
   },
   "plugins": [
     {

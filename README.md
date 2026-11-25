@@ -142,7 +142,7 @@ no comms and no composer, just the run.
 Three steps on a new machine, then restart:
 
 ```bash
-claude plugin marketplace add alan-oliv/team8-ai
+claude plugin marketplace add mmartinsoliv/team8-ai
 claude plugin install team8-ai@team8-ai
 # then, inside Claude Code:
 /team8-ai:setup
