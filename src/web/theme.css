@@ -1,0 +1,361 @@
+:root {
+  /* Nocturne, as the stylesheet's own fallback. The live values are written on
+     the console root by useSettings/cssVarsFor — see src/web/themes.ts — so a
+     theme switch reaches every consumer without a component knowing. These
+     defaults exist so the sheet stands alone before React mounts and so
+     anything outside the console root still resolves. */
+  --term: #12141f;
+  --color-bg: #161826;
+  --color-text: #e9e9ed;
+  --on-accent: #161826;
+
+  /* Ordered BY USE, not by lightness: 900 is the quietest fill or hairline and
+     200 the strongest text. A light theme runs these dark-to-light instead,
+     which is what lets the same markup read correctly either way. */
+  --color-neutral-200: #e2e3ea;
+  --color-neutral-300: #c8cad6;
+  --color-neutral-400: #b2b6ca;
+  --color-neutral-500: #9397ab;
+  --color-neutral-600: #75798c;
+  --color-neutral-700: #595d6c;
+  --color-neutral-800: #3f424d;
+  --color-neutral-900: #292b31;
+
+  --color-accent: #9184d9;
+  --color-accent-300: #d2cefd;
+  --color-accent-400: #b5abfc;
+  --color-accent-500: #968ae0;
+  --color-accent-600: #796cbf;
+  --color-accent-700: #5d5294;
+  --color-accent-900: #2b2741;
+
+  /* Semantic — a deliberate extension, since the palette has no warn/fail role.
+     Status only: plan approval pending, a failed teammate, context past the
+     threshold. Never decorative. */
+  --warn: #d99e5c;
+  --warn-edge: #6b4f2c;
+  --warn-tint: #2b2028;
+  --fail: #c98d8d;
+
+  /* Syntax colouring inside an expanded JSON payload and nowhere else. All
+     four value roles are their own variables: --warn and --fail are semantic
+     tokens, and a number is not a warning nor null a failure, so a theme has
+     to be able to retune one without moving the other. Keys and punctuation
+     still map onto accent-400 and neutral-600, which mean nothing on their
+     own. These are the Nocturne fallbacks; themes.ts publishes the rest. */
+  --json-string: #9ec9a8;
+  --json-number: #d99e5c;
+  --json-boolean: #7fb4d9;
+  --json-null: #c98d8d;
+
+  --font-heading: "Inter", system-ui, sans-serif;
+  --font-heading-weight: 500;
+  --font-body: "Inter", system-ui, sans-serif;
+
+  --space-1: 2.8px;
+  --space-2: 5.6px;
+  --space-3: 8.4px;
+  --space-4: 11.2px;
+  --space-6: 16.8px;
+  --space-8: 22.4px;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+
+  --shadow-sm: 0 0 0 1px var(--color-neutral-800);
+  --shadow-md: 0 0 0 1px var(--color-neutral-700), 0 6px 18px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 0 0 1px var(--color-neutral-500), 0 16px 40px rgba(0, 0, 0, 0.65);
+
+  background-color: var(--term);
+  color: var(--color-text);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--term);
+  color: inherit;
+  font: inherit;
+}
+
+button {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-align: inherit;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+.console {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--term);
+  color: var(--color-text);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  /* The diff modal's scrim is `position: absolute; inset: 0` over the whole
+     console, not the viewport. */
+  position: relative;
+}
+
+.console-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* A view fills the body slot and never widens it. Without this a view root is
+   a flex item at `min-width: auto`, so it cannot shrink below the widest
+   unwrapped line inside it: the rail and the overview both grew past 7000px on
+   a real transcript, scrolling the whole PAGE sideways and dragging the
+   panel off screen. The panes clip and ellipsise
+   correctly once the slot holds them to its width. */
+.console-body > * {
+  min-width: 0;
+}
+
+.tab:hover {
+  background: var(--color-neutral-900);
+}
+
+.btn-approve:not(:disabled):hover {
+  background: var(--color-accent-900);
+}
+
+.btn-neutral:not(:disabled):hover {
+  background: var(--color-neutral-900);
+}
+
+.question-step:hover {
+  color: var(--color-text);
+}
+
+.question-ref:hover {
+  background: var(--color-accent-900);
+}
+
+.question-other::placeholder {
+  color: var(--color-neutral-600);
+}
+
+.chip:hover {
+  border-color: var(--color-accent-700);
+}
+
+.thread-row:hover {
+  background: var(--color-neutral-900);
+}
+
+.diff-row:hover {
+  background: var(--color-accent-900);
+}
+
+/* The comms view's composing dots — an agent whose current turn is mid-
+   SendMessage, so the message is in neither inbox yet. */
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* The stream's tail cursor — the canvas's own 1.1s step-end blink, which reads
+   as a terminal at a prompt rather than as something animating. */
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+/* The entry splash: a fixed full-bleed layer over the whole console with one
+   centred stage, so the mark and the bloom share a single centre and scale
+   together. Nothing here is a token: the splash paints the handoff's own
+   colours inline and looks the same on every theme. */
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+
+.splash-stage {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+}
+
+.splash-bloom,
+.splash-mark {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.splash-bloom {
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(145, 132, 217, 0.2) 0%,
+    rgba(145, 132, 217, 0.06) 40%,
+    rgba(145, 132, 217, 0) 70%
+  );
+}
+
+.splash-node {
+  position: absolute;
+  border-radius: 0;
+}
+
+.splash-wait {
+  position: absolute;
+  left: 0;
+  top: 96px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  letter-spacing: 0.04em;
+}
+
+.team-trigger:hover {
+  border-color: var(--color-accent-700);
+  background: var(--color-accent-900);
+}
+
+/* Canvas `saIsStream`: the caret chip is the one control on a stream row, so it
+   answers to the pointer the way every other outlined control here does. */
+.stream-more:hover {
+  color: var(--color-accent-300);
+  border-color: var(--color-accent-700);
+}
+
+/* Every scrollable pane in every view — wall columns, overview tiles, grid
+   panes, the rail transcript and list, the task list, the mailbox. The bar is
+   always visible on a scrollable pane so the affordance reads. */
+.tscroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Y only. A pane hitting its end must not scroll the page — that is what this
+     is for — but containing BOTH axes also swallowed horizontal wheel events,
+     and the panes cover nearly all of the wall. A sideways swipe anywhere over
+     a transcript did nothing, leaving the scrollbar as the only way to reach
+     the columns off-screen. The panes have no X scroll of their own, so
+     chaining sideways to the wall is the only sensible thing they can do. */
+  overscroll-behavior-y: contain;
+}
+
+/* The wall's own axis. Same treatment as a pane, or the one scroller the
+   operator uses most is the one wearing an unstyled OS scrollbar. */
+.hscroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+}
+
+.tscroll,
+.hscroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-neutral-800) transparent;
+}
+
+/* Bottom-anchors the lines. `justify-content: flex-end` looks identical and
+   makes the column unscrollable upward — the content overflows past the top
+   edge where no scrollbar can reach it.
+
+   Streams only — transcripts and the mailbox. The task list and the rail's
+   roster read top-down: anchoring those put 90-170px of dead space above the
+   first row and pushed the later ones below the fold. */
+.tscroll.tail > *:first-child {
+  margin-top: auto;
+}
+
+.tscroll::-webkit-scrollbar,
+.hscroll::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+.tscroll::-webkit-scrollbar-track,
+.hscroll::-webkit-scrollbar-track {
+  background: color-mix(in srgb, var(--color-text) 3.5%, transparent);
+}
+
+.tscroll::-webkit-scrollbar-thumb,
+.hscroll::-webkit-scrollbar-thumb {
+  background: var(--color-neutral-800);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.tscroll:hover::-webkit-scrollbar-thumb,
+.hscroll:hover::-webkit-scrollbar-thumb {
+  background: var(--color-accent-700);
+  background-clip: content-box;
+}
+
+/* Motion off kills the cursor blink and the typing dots wherever they live.
+   Done from the root rather than per component so it reaches the ones this
+   pass does not own, and so a new animation is covered by construction. */
+.console[data-motion="off"] *,
+.console[data-motion="off"] *::before,
+.console[data-motion="off"] *::after {
+  animation: none !important;
+}
+
+.cfg-trigger:hover {
+  color: var(--color-accent-300);
+  background: var(--color-accent-900);
+}
+
+.cfg-tile:hover,
+.cfg-seg:hover {
+  background: var(--color-neutral-900);
+}
+
+.cfg-reset:hover {
+  color: var(--color-accent-300);
+}

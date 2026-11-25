@@ -1,0 +1,1002 @@
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { FIXTURE_NOW, fixtureAgents } from '../agents.fixture';
+import { buildCast } from '../../shared/cast';
+import { CastContext } from '../state/useCast';
+import type { Task } from '../../shared/domain';
+import { Wall, taskListSummary } from './Wall';
+
+afterEach(cleanup);
+
+// Counts per-column renders: every column renders exactly one TranscriptFeed, and the
+// real one is still rendered so the DOM assertions above are unaffected.
+const feed = vi.hoisted(() => ({ renders: 0 }));
+vi.mock('../components/TranscriptFeed', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../components/TranscriptFeed')>();
+  return {
+    ...actual,
+    TranscriptFeed(props: Parameters<typeof actual.TranscriptFeed>[0]) {
+      feed.renders += 1;
+      return <actual.TranscriptFeed {...props} />;
+    },
+  };
+});
+
+
+const agents = fixtureAgents();
+
+function renderWall(onFocus = vi.fn(), tasks?: Task[]) {
+  render(
+    <Wall agents={agents} focused="probe-alpha" onFocus={onFocus} now={FIXTURE_NOW} tasks={tasks} />,
+  );
+  return onFocus;
+}
+
+const TASK: Task = {
+  id: 'T-00',
+  subject: 'a task',
+  description: '',
+  state: 'pending',
+  blocks: [],
+  blockedBy: [],
+};
+
+describe('Wall', () => {
+  it('renders one 366px column per team member', () => {
+    renderWall();
+    const columns = screen.getAllByTestId('wall-column');
+    expect(columns).toHaveLength(4);
+    for (const column of columns) expect(column.style.width).toBe('366px');
+  });
+
+  it('pins only the lead column', () => {
+    renderWall();
+    const columns = screen.getAllByTestId('wall-column');
+    expect(columns[0].style.left).toBe('0px');
+    expect(columns[0].style.zIndex).toBe('2');
+    expect(columns[1].style.left).toBe('');
+    expect(columns[1].style.zIndex).toBe('');
+    expect(columns[2].style.left).toBe('');
+  });
+
+  it('pins the lead column leftmost even when it is last in the agents array', () => {
+    const leadLast = [...agents.slice(1), agents[0]];
+    expect(leadLast[leadLast.length - 1].isLead).toBe(true);
+    render(<Wall agents={leadLast} focused="probe-alpha" onFocus={vi.fn()} now={FIXTURE_NOW} />);
+    const columns = screen.getAllByTestId('wall-column');
+    expect(within(columns[0]).getByTestId('wall-name').textContent).toBe('team-lead');
+    expect(columns[0].style.position).toBe('sticky');
+    expect(columns[0].style.left).toBe('0px');
+    expect(columns[0].style.zIndex).toBe('2');
+  });
+
+  // The axis and the themed scrollbar both come from .hscroll: an unstyled OS
+  // bar on the one scroller the operator uses most read as a bug.
+  it('scrolls horizontally only, on a themed bar', () => {
+    renderWall();
+    const wall = screen.getByTestId('wall');
+    expect(wall.className).toBe('hscroll');
+    expect(wall.style.overflowX).toBe('');
+    expect(wall.style.overflowY).toBe('');
+  });
+
+  it('renders the three header lines for probe-alpha', () => {
+    renderWall();
+    const alpha = within(screen.getAllByTestId('wall-column')[1]);
+    expect(alpha.getByTestId('wall-name').textContent).toBe('probe-alpha');
+    expect(alpha.getByTestId('wall-type').textContent).toBe('general-purpose');
+    expect(alpha.getByTestId('wall-model').textContent).toBe('claude-opus-5');
+    expect(alpha.getByTestId('wall-role').textContent).toBe('Spike probe alpha');
+    expect(alpha.getByTestId('wall-elapsed').textContent).toBe('0m 42s');
+    expect(alpha.getByTestId('wall-pct').textContent).toBe('3%');
+    expect(alpha.getByTestId('wall-ctx').textContent).toBe('34.5k / 1M');
+    expect(alpha.getByTestId('wall-cost').textContent).toBe('≈$0.46');
+    expect(alpha.getByTestId('wall-warn').textContent).toBe('');
+    expect(alpha.getByTestId('wall-warn').style.width).toBe('7px');
+  });
+
+  // At the 232px column floor, hyphenated content ("general-purpose",
+  // "claude-opus-5") wraps at the hyphen by default, ballooning the header to
+  // several physical lines and misaligning it against its neighbours. The
+  // name is what yields — identity truncating reads better than a model or
+  // elapsed time vanishing — so it alone gets ellipsis; the rest hold their
+  // width and just refuse to wrap.
+  it('keeps the identity line to one line under width pressure, with the name yielding first', () => {
+    renderWall();
+    const alpha = within(screen.getAllByTestId('wall-column')[1]);
+
+    const name = alpha.getByTestId('wall-name');
+    expect(name.style.whiteSpace).toBe('nowrap');
+    expect(name.style.overflow).toBe('hidden');
+    expect(name.style.textOverflow).toBe('ellipsis');
+    expect(name.style.minWidth).toBe('0');
+
+    const type = alpha.getByTestId('wall-type');
+    expect(type.style.whiteSpace).toBe('nowrap');
+    expect(type.style.flexShrink).toBe('0');
+
+    const model = alpha.getByTestId('wall-model');
+    expect(model.style.whiteSpace).toBe('nowrap');
+    expect(model.style.flexShrink).toBe('0');
+
+    const elapsed = alpha.getByTestId('wall-elapsed');
+    expect(elapsed.style.whiteSpace).toBe('nowrap');
+    expect(elapsed.style.flexShrink).toBe('0');
+  });
+
+  it('renders the current-tool row folded back from the README', () => {
+    renderWall();
+    const columns = screen.getAllByTestId('wall-column');
+    const alphaTool = within(columns[1]).getByTestId('wall-current-tool');
+    expect(alphaTool.textContent).toBe('Bash(sleep 20)');
+    expect(alphaTool.style.whiteSpace).toBe('nowrap');
+    expect(alphaTool.style.overflow).toBe('hidden');
+    expect(alphaTool.style.textOverflow).toBe('ellipsis');
+    // probe-charlie is idle and has no tool in flight
+    expect(within(columns[3]).getByTestId('wall-current-tool').textContent).toBe('');
+  });
+
+  // One composer, in the lead's column. A composer per column implied a channel
+  // this model does not have: every send is a direct inbox write, so the target
+  // belongs to the message — the mention — not to where you typed it.
+  it('gives the wall exactly one composer, in the lead column', () => {
+    renderWall();
+    const inputs = screen.getAllByTestId('composer-input') as HTMLTextAreaElement[];
+    expect(inputs).toHaveLength(1);
+    const lead = screen.getAllByTestId('wall-column')[0];
+    expect(within(lead).getByTestId('composer-input')).toBeTruthy();
+  });
+
+  // The other half of the same rule: a column with no composer has to say why
+  // it has none, or its absence reads as a column that is somehow less loaded.
+  it('marks every column without the composer read-only', () => {
+    renderWall();
+    const columns = screen.getAllByTestId('wall-column');
+    expect(within(columns[0]).queryByTestId('wall-read-only')).toBeNull();
+    expect(within(columns[1]).getByTestId('wall-read-only').textContent).toBe('read-only');
+  });
+
+  // A roster of one has nothing to drain the lead's inbox, so the box would take
+  // a message nobody ever reads.
+  it('gives a solo roster a note where the composer would be', () => {
+    render(
+      <Wall agents={[agents[0]]} focused={agents[0].name} onFocus={vi.fn()} now={FIXTURE_NOW} />,
+    );
+    expect(screen.queryByTestId('composer-input')).toBeNull();
+    expect(screen.getByTestId('composer-solo')).toBeTruthy();
+  });
+
+  // The lead's session runs the plugin's module and polls the console, so a
+  // message typed here enters its terminal as the operator's own prompt.
+  it('gives a solo roster the composer once its lead is reachable', () => {
+    render(
+      <Wall agents={[agents[0]]} focused={agents[0].name} onFocus={vi.fn()} now={FIXTURE_NOW} leadReachable />,
+    );
+    expect(screen.getByTestId('composer-input')).toBeTruthy();
+    expect(screen.queryByTestId('composer-solo')).toBeNull();
+  });
+
+  it('shows the solo lead a working line while it works and the cursor row when idle', () => {
+    const solo = (status: 'working' | 'idle') => (
+      <Wall
+        agents={[{ ...agents[0], status, turnStartedAt: FIXTURE_NOW - 5000 }]}
+        focused={agents[0].name}
+        onFocus={vi.fn()}
+        now={FIXTURE_NOW}
+        leadReachable
+      />
+    );
+    const { rerender } = render(solo('working'));
+    expect(screen.getByTestId('stream-working')).toBeTruthy();
+    expect(screen.queryByTestId('stream-prompt')).toBeNull();
+    rerender(solo('idle'));
+    expect(screen.getByTestId('stream-prompt')).toBeTruthy();
+    expect(screen.queryByTestId('stream-working')).toBeNull();
+  });
+
+  // At rest it is a prompt and a hint. No @ means the lead, which is the common
+  // case, so there is nothing to pick and nothing on screen to pick it with.
+  it('shows no chip and no picker until an @ is typed', () => {
+    renderWall();
+    expect((screen.getByTestId('composer-input') as HTMLTextAreaElement).placeholder)
+      .toBe('message the lead · @ to reach a teammate');
+    expect(screen.queryByTestId('route-chip')).toBeNull();
+    expect(screen.queryByTestId('route-menu')).toBeNull();
+  });
+
+  it('opens the teammate list on @ and filters it as you type', () => {
+    renderWall();
+    const input = screen.getByTestId('composer-input');
+    fireEvent.change(input, { target: { value: '@' } });
+    expect(screen.getByTestId('route-menu')).toBeTruthy();
+    expect(screen.getByTestId('route-filter').textContent).toBe('type to filter');
+    expect(screen.getAllByTestId('route-option').length).toBeGreaterThan(1);
+
+    fireEvent.change(input, { target: { value: '@probe-b' } });
+    expect(screen.getByTestId('route-filter').textContent).toBe('@probe-b');
+    const names = screen.getAllByTestId('route-option').map((o) => o.textContent);
+    expect(names).toHaveLength(1);
+    expect(names[0]).toContain('@probe-bravo');
+  });
+
+  it('resolves a pick into a chip and closes the picker', () => {
+    renderWall();
+    const input = screen.getByTestId('composer-input');
+    fireEvent.change(input, { target: { value: '@probe-b' } });
+    fireEvent.mouseDown(screen.getAllByTestId('route-option')[0]);
+
+    expect(screen.getByTestId('route-chip').textContent).toBe('@probe-bravo');
+    expect(screen.queryByTestId('route-menu')).toBeNull();
+    // The box carries the message, not the routing prefix.
+    expect((input as HTMLTextAreaElement).value).toBe('');
+  });
+
+  it('sends only the message body, to the mentioned teammate', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response('{}', { status: 200 })));
+    vi.stubGlobal('fetch', fetchMock);
+    renderWall();
+    const input = screen.getByTestId('composer-input');
+    fireEvent.change(input, { target: { value: '@probe-bravo ' } });
+    fireEvent.change(input, { target: { value: 'ship it' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/agents/probe-bravo/message',
+      expect.objectContaining({ body: JSON.stringify({ text: 'ship it' }) }),
+    );
+  });
+
+  // The first row is the ⏎ default, so Enter has to resolve the mention rather
+  // than send a message still addressed to nobody.
+  it('takes the highlighted row on Enter while the picker is open', () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response('{}', { status: 200 })));
+    vi.stubGlobal('fetch', fetchMock);
+    renderWall();
+    const input = screen.getByTestId('composer-input');
+    fireEvent.change(input, { target: { value: '@probe-b' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(screen.getByTestId('route-chip').textContent).toBe('@probe-bravo');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // The name span, not textContent: the row concatenates the name and its state
+  // with no separator, so `@probe-alpha` + `working` reads as one token.
+  const nameOf = (row: HTMLElement) => row.querySelector('span')!.textContent!;
+  const optionNames = () => screen.getAllByTestId('route-option').map(nameOf);
+  const highlighted = () =>
+    nameOf(screen.getAllByTestId('route-option').find((o) => o.textContent!.includes('⏎'))!);
+
+  it('walks the picker with the arrow keys', () => {
+    renderWall();
+    const input = screen.getByTestId('composer-input');
+    fireEvent.change(input, { target: { value: '@' } });
+    const names = optionNames();
+    expect(names.length).toBeGreaterThan(2);
+    expect(highlighted()).toBe(names[0]);
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(highlighted()).toBe(names[1]);
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(highlighted()).toBe(names[2]);
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+    expect(highlighted()).toBe(names[1]);
+  });
+
+  it('wraps at both ends rather than stopping dead', () => {
+    renderWall();
+    const input = screen.getByTestId('composer-input');
+    fireEvent.change(input, { target: { value: '@' } });
+    const names = optionNames();
+
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+    expect(highlighted()).toBe(names[names.length - 1]);
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(highlighted()).toBe(names[0]);
+  });
+
+  // Caught live, not by fireEvent: fireEvent flushes between presses, so a
+  // render-time index looked correct in tests while a fast double-press in the
+  // browser advanced only one row.
+  it('advances two rows for two presses inside one render batch', () => {
+    renderWall();
+    const input = screen.getByTestId('composer-input');
+    fireEvent.change(input, { target: { value: '@' } });
+    const names = optionNames();
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    });
+    expect(highlighted()).toBe(names[2]);
+  });
+
+  it('takes the arrowed-to row on Enter, not the first one', () => {
+    renderWall();
+    const input = screen.getByTestId('composer-input');
+    fireEvent.change(input, { target: { value: '@' } });
+    const second = optionNames()[1];
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByTestId('route-chip').textContent).toBe(second);
+  });
+
+  // Narrowing the filter can drop the row the cursor was on; an unclamped
+  // index would then resolve to nobody.
+  it('keeps the highlight in range when the filter narrows under it', () => {
+    renderWall();
+    const input = screen.getByTestId('composer-input');
+    fireEvent.change(input, { target: { value: '@' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.change(input, { target: { value: '@probe-b' } });
+    expect(screen.getAllByTestId('route-option')).toHaveLength(1);
+    expect(highlighted()).toBe('@probe-bravo');
+  });
+
+  it('backspace on an empty box takes the chip off', () => {
+    renderWall();
+    const input = screen.getByTestId('composer-input');
+    fireEvent.change(input, { target: { value: '@probe-b' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByTestId('route-chip')).toBeTruthy();
+
+    fireEvent.keyDown(input, { key: 'Backspace' });
+    expect(screen.queryByTestId('route-chip')).toBeNull();
+    expect((input as HTMLTextAreaElement).placeholder)
+      .toBe('message the lead · @ to reach a teammate');
+  });
+
+  // Only when the box is empty — otherwise backspace is editing the message.
+  it('leaves the chip alone while there is still a message to delete', () => {
+    renderWall();
+    const input = screen.getByTestId('composer-input');
+    fireEvent.change(input, { target: { value: '@probe-b' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.change(input, { target: { value: 'hi' } });
+
+    fireEvent.keyDown(input, { key: 'Backspace' });
+    expect(screen.getByTestId('route-chip').textContent).toBe('@probe-bravo');
+  });
+
+  it('focuses a column on click', () => {
+    const onFocus = renderWall();
+    fireEvent.click(screen.getAllByTestId('wall-column')[2]);
+    expect(onFocus).toHaveBeenCalledWith('probe-bravo');
+  });
+
+  it('tints a column on hover and clears the tint on leave', () => {
+    renderWall();
+    const charlie = screen.getAllByTestId('wall-column')[3];
+    expect(charlie.style.background).toBe('var(--term)');
+    fireEvent.mouseEnter(charlie);
+    expect(charlie.style.background).toBe('var(--color-bg)');
+    fireEvent.mouseLeave(charlie);
+    expect(charlie.style.background).toBe('var(--term)');
+  });
+
+  it('dims a departed agent column to opacity .55', () => {
+    const withDeparted = agents.map((a) =>
+      a.name === 'probe-charlie' ? { ...a, status: 'departed' as const } : a,
+    );
+    render(<Wall agents={withDeparted} focused="probe-alpha" onFocus={vi.fn()} now={FIXTURE_NOW} />);
+    const columns = screen.getAllByTestId('wall-column');
+    const charlie = columns.find((c) => within(c).getByTestId('wall-name').textContent === 'probe-charlie')!;
+    expect(charlie.style.opacity).toBe('0.55');
+    const alpha = columns.find((c) => within(c).getByTestId('wall-name').textContent === 'probe-alpha')!;
+    expect(alpha.style.opacity).toBe('1');
+  });
+
+  it('dims an idle agent column too — an idle teammate has already returned', () => {
+    const withDeparted = agents.map((a) =>
+      a.name === 'probe-charlie' ? { ...a, status: 'idle' as const } : a,
+    );
+    render(<Wall agents={withDeparted} focused="probe-alpha" onFocus={vi.fn()} now={FIXTURE_NOW} />);
+    const columns = screen.getAllByTestId('wall-column');
+    const charlie = columns.find((c) => within(c).getByTestId('wall-name').textContent === 'probe-charlie')!;
+    expect(charlie.style.opacity).toBe('0.55');
+    const alpha = columns.find((c) => within(c).getByTestId('wall-name').textContent === 'probe-alpha')!;
+    expect(alpha.style.opacity).toBe('1');
+  });
+});
+
+describe('Wall column memoisation', () => {
+  const now = FIXTURE_NOW;
+
+  it('does not re-render a column whose agent object did not change', () => {
+    const onFocus = vi.fn();
+    feed.renders = 0;
+    const { rerender } = render(<Wall agents={agents} focused="probe-alpha" onFocus={onFocus} now={now} />);
+    expect(feed.renders).toBe(4);
+
+    feed.renders = 0;
+    rerender(<Wall agents={agents} focused="probe-alpha" onFocus={onFocus} now={now} />);
+    expect(feed.renders).toBe(0);
+  });
+
+  it('re-renders only the column whose agent changed', () => {
+    const onFocus = vi.fn();
+    const { rerender } = render(<Wall agents={agents} focused="probe-alpha" onFocus={onFocus} now={now} />);
+    const changed = agents.map((a) => (a.name === 'probe-bravo' ? { ...a, status: 'idle' as const } : a));
+
+    feed.renders = 0;
+    rerender(<Wall agents={changed} focused="probe-alpha" onFocus={onFocus} now={now} />);
+    expect(feed.renders).toBe(1);
+  });
+
+  it('does not re-render a column when only the clock advances', () => {
+    const onFocus = vi.fn();
+    const { rerender } = render(<Wall agents={agents} focused="probe-alpha" onFocus={onFocus} now={now} />);
+    const elapsed = () => within(screen.getAllByTestId('wall-column')[1]).getByTestId('wall-elapsed').textContent;
+    expect(elapsed()).toBe('0m 42s');
+
+    feed.renders = 0;
+    rerender(<Wall agents={agents} focused="probe-alpha" onFocus={onFocus} now={now + 1000} />);
+    expect(feed.renders).toBe(0);
+    expect(elapsed()).toBe('0m 43s');
+  });
+
+  it('does not re-render unhovered columns when hover moves', () => {
+    renderWall();
+    feed.renders = 0;
+    fireEvent.mouseEnter(screen.getAllByTestId('wall-column')[3]);
+    // Only the entered column's `isTinted` moves, so exactly one column re-renders.
+    expect(feed.renders).toBe(1);
+  });
+
+  // The wall used to render in config join order, so a teammate that finished
+  // yesterday held a visible column while a live one sat off the right edge of a
+  // 5504px scroller nothing ever scrolled.
+  describe('live agents hold the visible columns', () => {
+    const withDeparted = () => {
+      const [lead, alpha, bravo, charlie] = agents;
+      return [
+        { ...alpha, status: 'departed' as const },
+        { ...bravo, status: 'departed' as const },
+        lead,
+        charlie,
+      ];
+    };
+
+    const names = () =>
+      screen.getAllByTestId('wall-column').map((c) => c.getAttribute('data-agent'));
+
+    it('orders the lead first, then live agents, then departed ones', () => {
+      render(<Wall agents={withDeparted()} focused={null} onFocus={vi.fn()} now={FIXTURE_NOW} />);
+      expect(names()).toEqual(['team-lead', 'probe-charlie', 'probe-alpha', 'probe-bravo']);
+    });
+
+    it('keeps join order within each group, so columns do not reshuffle as agents act', () => {
+      const [lead, alpha, bravo, charlie] = agents;
+      render(
+        <Wall
+          agents={[{ ...bravo, status: 'departed' as const }, alpha, lead, charlie]}
+          focused={null}
+          onFocus={vi.fn()}
+          now={FIXTURE_NOW}
+        />,
+      );
+      expect(names()).toEqual(['team-lead', 'probe-alpha', 'probe-charlie', 'probe-bravo']);
+    });
+
+    it('scrolls the focused column into view, so a ?agent= deep link is reachable', () => {
+      const scrolled: string[] = [];
+      // jsdom has no layout, so scrollIntoView is undefined until we supply it.
+      Element.prototype.scrollIntoView = function scrollIntoView(this: Element) {
+        scrolled.push(this.getAttribute('data-agent') ?? '');
+      };
+      render(
+        <Wall agents={agents} focused="probe-charlie" onFocus={vi.fn()} now={FIXTURE_NOW} />,
+      );
+      expect(scrolled).toEqual(['probe-charlie']);
+    });
+
+    it('does not scroll when nothing is focused', () => {
+      const scrolled: string[] = [];
+      Element.prototype.scrollIntoView = function scrollIntoView(this: Element) {
+        scrolled.push(this.getAttribute('data-agent') ?? '');
+      };
+      render(<Wall agents={agents} focused={null} onFocus={vi.fn()} now={FIXTURE_NOW} />);
+      expect(scrolled).toEqual([]);
+    });
+
+    // The other pair member scrolls into view first, so if both columns fit
+    // the viewport, `focused`'s own nearest-scroll finds it already visible and
+    // is a no-op — both stay in view. `revealAlso` is the comms show-in-wall hint.
+    it('scrolls the reveal-hint column into view alongside the focused one', () => {
+      const scrolled: string[] = [];
+      Element.prototype.scrollIntoView = function scrollIntoView(this: Element) {
+        scrolled.push(this.getAttribute('data-agent') ?? '');
+      };
+      render(
+        <Wall
+          agents={agents}
+          focused="probe-charlie"
+          revealAlso="probe-alpha"
+          onFocus={vi.fn()}
+          now={FIXTURE_NOW}
+        />,
+      );
+      expect(scrolled).toEqual(['probe-alpha', 'probe-charlie']);
+    });
+  });
+});
+
+describe('Wall column resizing', () => {
+  const grip = (name: string) =>
+    screen.getAllByTestId('wall-grip').find((g) => g.getAttribute('data-agent') === name)!;
+  const column = (name: string) =>
+    screen.getAllByTestId('wall-column').find((c) => c.getAttribute('data-agent') === name)!;
+
+  function renderResizable(widths: Record<string, number> = {}) {
+    const onWidthChange = vi.fn();
+    const { rerender } = render(
+      <Wall
+        agents={agents}
+        focused={null}
+        onFocus={vi.fn()}
+        now={FIXTURE_NOW}
+        widths={widths}
+        onWidthChange={onWidthChange}
+      />,
+    );
+    return { onWidthChange, rerender };
+  }
+
+  function drag(name: string, dx: number) {
+    fireEvent.mouseDown(grip(name), { clientX: 400 });
+    fireEvent.mouseMove(window, { clientX: 400 + dx });
+  }
+
+  it('defaults every column to 366px', () => {
+    renderResizable();
+    for (const c of screen.getAllByTestId('wall-column')) expect(c.style.width).toBe('366px');
+  });
+
+  it('renders the width the store holds for that agent', () => {
+    renderResizable({ 'probe-alpha': 500 });
+    expect(column('probe-alpha').style.width).toBe('500px');
+    expect(column('probe-bravo').style.width).toBe('366px');
+  });
+
+  it('reports the dragged delta for that column only', () => {
+    const { onWidthChange } = renderResizable();
+    drag('probe-alpha', 90);
+    expect(onWidthChange).toHaveBeenCalledWith('probe-alpha', 456);
+    fireEvent.mouseUp(window);
+  });
+
+  it('drags from the column own width, not the default', () => {
+    const { onWidthChange } = renderResizable({ 'probe-alpha': 500 });
+    drag('probe-alpha', -40);
+    expect(onWidthChange).toHaveBeenCalledWith('probe-alpha', 460);
+    fireEvent.mouseUp(window);
+  });
+
+  it('stops reporting once the mouse is released', () => {
+    const { onWidthChange } = renderResizable();
+    drag('probe-alpha', 20);
+    fireEvent.mouseUp(window);
+    onWidthChange.mockClear();
+    fireEvent.mouseMove(window, { clientX: 900 });
+    expect(onWidthChange).not.toHaveBeenCalled();
+  });
+
+  it('resets to the default on double-click', () => {
+    const { onWidthChange } = renderResizable({ 'probe-alpha': 500 });
+    fireEvent.doubleClick(grip('probe-alpha'));
+    expect(onWidthChange).toHaveBeenCalledWith('probe-alpha', null);
+  });
+
+  // The grip lives inside the column, and the column focuses its agent on click.
+  it('does not focus the agent when the grip is grabbed', () => {
+    const onFocus = vi.fn();
+    render(
+      <Wall
+        agents={agents}
+        focused={null}
+        onFocus={onFocus}
+        now={FIXTURE_NOW}
+        widths={{}}
+        onWidthChange={vi.fn()}
+      />,
+    );
+    fireEvent.mouseDown(grip('probe-alpha'), { clientX: 400 });
+    fireEvent.click(grip('probe-alpha'));
+    expect(onFocus).not.toHaveBeenCalled();
+    fireEvent.mouseUp(window);
+  });
+
+  it('shows the accent line only on the column being dragged', () => {
+    renderResizable();
+    const line = (name: string) => grip(name).firstElementChild as HTMLElement;
+    expect(line('probe-alpha').style.background).toBe('transparent');
+    drag('probe-alpha', 10);
+    expect(line('probe-alpha').style.background).toBe('var(--color-accent-500)');
+    expect(line('probe-bravo').style.background).toBe('transparent');
+    fireEvent.mouseUp(window);
+  });
+});
+
+describe('in-flight badge', () => {
+  const now = FIXTURE_NOW;
+  // Written to the inbox, not yet pulled into a context window. A busy agent
+  // legitimately sits non-zero; it is a readout, not an alert.
+  it('counts messages queued for an agent that has not taken its next turn', () => {
+    const queued = agents.map((a) => (a.name === 'probe-alpha' ? { ...a, unread: 2 } : a));
+    render(<Wall agents={queued} focused={null} onFocus={vi.fn()} now={now} />);
+    const badges = screen.getAllByTestId('in-flight');
+    expect(badges).toHaveLength(1);
+    expect(badges[0].textContent).toBe('2 in flight');
+  });
+
+  it('shows nothing at all for an agent with an empty inbox', () => {
+    render(<Wall agents={agents} focused={null} onFocus={vi.fn()} now={now} />);
+    expect(screen.queryAllByTestId('in-flight')).toHaveLength(0);
+  });
+
+  // The badge claims nothing about delivery, so the title says only what is
+  // true: it was written, and it is read at a boundary nothing can force.
+  it('says what the count means without promising when it is read', () => {
+    const queued = agents.map((a) => (a.name === 'probe-alpha' ? { ...a, unread: 2 } : a));
+    render(<Wall agents={queued} focused={null} onFocus={vi.fn()} now={now} />);
+    expect(screen.getByTestId('in-flight').title).toBe(
+      'written to this inbox · read at its next turn boundary',
+    );
+  });
+
+  // Header line 1 is identity — name, type, model. The badge and the stop
+  // control are about the agent's current turn, which is line 2's subject.
+  it('sits on the status line, not the identity line', () => {
+    const queued = agents.map((a) => (a.name === 'probe-alpha' ? { ...a, unread: 2 } : a));
+    render(<Wall agents={queued} focused={null} onFocus={vi.fn()} now={now} />);
+    const line = screen.getByTestId('in-flight').parentElement!;
+    expect(within(line).getByTestId('wall-elapsed')).toBeTruthy();
+    expect(within(line).queryByTestId('wall-model')).toBeNull();
+  });
+});
+
+describe('compaction note', () => {
+  // probe-charlie is the haiku agent: a 200k window, so compaction at 167k.
+  const nearCompaction = (contextTokens: number) =>
+    agents.map((a) => (a.name === 'probe-charlie' ? { ...a, contextTokens } : a));
+
+  const charlie = () =>
+    within(
+      screen.getAllByTestId('wall-column').find((c) => c.dataset.agent === 'probe-charlie')!,
+    );
+
+  function renderNear(contextTokens: number) {
+    render(
+      <Wall
+        agents={nearCompaction(contextTokens)}
+        focused={null}
+        onFocus={vi.fn()}
+        now={FIXTURE_NOW}
+      />,
+    );
+  }
+
+  it('says nothing while every agent still has headroom', () => {
+    render(<Wall agents={agents} focused={null} onFocus={vi.fn()} now={FIXTURE_NOW} />);
+    expect(screen.queryAllByTestId('wall-compaction')).toHaveLength(0);
+  });
+
+  // The design's warning has two stages: `!` once the threshold is behind the
+  // agent, the note once the trigger is close. The glyph stays when the note
+  // arrives — the note is the second half of the warning, not a replacement.
+  it('counts the headroom down beside the warn glyph once compaction is close', () => {
+    renderNear(160_000);
+    expect(charlie().getByTestId('wall-warn').textContent).toBe('!');
+    const note = charlie().getByTestId('wall-compaction');
+    expect(note.textContent).toBe('compaction in ~7k tokens');
+    expect(note.style.color).toBe('var(--warn)');
+  });
+
+  // Past the 150_000 threshold (75% of the 200k window) but short of 158_500,
+  // which is halfway from there to the 167k trigger.
+  it('holds back the note while only the glyph is warranted', () => {
+    renderNear(152_000);
+    expect(charlie().getByTestId('wall-warn').textContent).toBe('!');
+    expect(charlie().queryByTestId('wall-compaction')).toBeNull();
+  });
+
+  it('warns only the agent that is near its own trigger', () => {
+    renderNear(160_000);
+    expect(screen.getAllByTestId('wall-compaction')).toHaveLength(1);
+  });
+
+  // The context line is already full at the default 366px column and the header
+  // rows are one-line, so the note takes a row of its own rather than wrapping
+  // the meter onto a second line. It is ellipsised there, with the full text on
+  // the title, for a column dragged down to COLUMN_MIN.
+  it('keeps the note on one line of its own, never on the context line', () => {
+    renderNear(160_000);
+    const note = charlie().getByTestId('wall-compaction');
+    expect(note.parentElement).not.toBe(charlie().getByTestId('wall-ctx').parentElement);
+    expect(note.style.whiteSpace).toBe('nowrap');
+    expect(note.style.overflow).toBe('hidden');
+    expect(note.style.textOverflow).toBe('ellipsis');
+    expect(note.title).toBe('compaction in ~7k tokens');
+  });
+});
+
+// Two behaviours the design README's "Interactions & behaviour" describes and
+// this wall deliberately does not have. The design's own prototype does not
+// have them either — see the notes beside the code in Wall.tsx. These pin the
+// decisions so neither gets reintroduced as a stray "missing feature".
+describe('interactions the wall settles against the README', () => {
+  const column = (name: string) =>
+    screen.getAllByTestId('wall-column').find((c) => c.dataset.agent === name)!;
+
+  it('takes a click as focus alone, never as a resize', () => {
+    const onFocus = vi.fn();
+    const onWidthChange = vi.fn();
+    render(
+      <Wall
+        agents={agents}
+        focused={null}
+        onFocus={onFocus}
+        onWidthChange={onWidthChange}
+        now={FIXTURE_NOW}
+      />,
+    );
+    fireEvent.click(column('probe-alpha'));
+    expect(onFocus).toHaveBeenCalledWith('probe-alpha');
+    expect(onWidthChange).not.toHaveBeenCalled();
+  });
+
+  // Focus is shared state set from five places — a column click, h/l, ↑/↓,
+  // `?agent=`, and a click in another view — so widening on focus would resize
+  // columns under a keyboard scan and overwrite a width the operator dragged.
+  it('draws a focused column at the width the operator gave it', () => {
+    render(
+      <Wall
+        agents={agents}
+        focused="probe-alpha"
+        onFocus={vi.fn()}
+        widths={{ 'probe-alpha': 260 }}
+        onWidthChange={vi.fn()}
+        now={FIXTURE_NOW}
+      />,
+    );
+    expect(column('probe-alpha').style.width).toBe('260px');
+    expect(column('probe-alpha').getAttribute('aria-current')).toBe('true');
+    expect(column('probe-bravo').style.width).toBe('366px');
+  });
+
+  // The README asks for idle rows to collapse 30s after the whole team goes
+  // idle. The wall dims them instead: the lead's column carries the console's
+  // only composer, so collapsing an all-idle team would take the send control
+  // away at exactly the moment the operator wants to wake someone.
+  it('keeps every column of an all-idle team, dimmed rather than collapsed', () => {
+    const allIdle = agents.map((a) => ({ ...a, status: 'idle' as const, currentTool: undefined }));
+    render(
+      <Wall
+        agents={allIdle}
+        focused={null}
+        onFocus={vi.fn()}
+        now={FIXTURE_NOW + 60_000}
+      />,
+    );
+    const columns = screen.getAllByTestId('wall-column');
+    expect(columns).toHaveLength(4);
+    for (const c of columns) expect(c.style.opacity).toBe('0.55');
+    expect(screen.getAllByTestId('composer-input')).toHaveLength(1);
+  });
+
+  // The `N idle agents` chip the same README paragraph asks for is built, but in
+  // the footer panel (Panel.tsx IDLE_COLLAPSE_AT) — which is where the design's
+  // prototype puts it too, beside the ↑↓ legend rather than on the wall.
+  it('never summarises idle agents into a chip of its own', () => {
+    const allIdle = agents.map((a) => ({ ...a, status: 'idle' as const }));
+    render(<Wall agents={allIdle} focused={null} onFocus={vi.fn()} now={FIXTURE_NOW} />);
+    expect(screen.queryByText(/idle agents?$/)).toBeNull();
+  });
+});
+
+it('opens the queued messages from the in-flight badge instead of only counting them', () => {
+  const onOpenMail = vi.fn();
+  const [first, second] = fixtureAgents();
+  const agents = [{ ...first, unread: 4 }, second];
+  render(<Wall agents={agents} focused={null} onFocus={() => {}} now={FIXTURE_NOW} onOpenMail={onOpenMail} />);
+
+  const badge = screen.getByTestId('in-flight');
+  expect(badge.textContent).toBe('4 in flight');
+  fireEvent.click(badge);
+  expect(onOpenMail).toHaveBeenCalledWith(agents[0].name);
+});
+
+// The badge must not double as "focus this column" — it sits inside a row whose
+// own click focuses, and opening the mail is the more specific intent.
+it('does not focus the column when the badge is clicked', () => {
+  const onFocus = vi.fn();
+  const [first, second] = fixtureAgents();
+  const agents = [{ ...first, unread: 2 }, second];
+  render(<Wall agents={agents} focused={null} onFocus={onFocus} now={FIXTURE_NOW} onOpenMail={() => {}} />);
+  fireEvent.click(screen.getByTestId('in-flight'));
+  expect(onFocus).not.toHaveBeenCalled();
+});
+
+// Movie themes rename agents and nothing else. The cast comes from context, so
+// every view renders the same character for the same role.
+describe('a themed wall', () => {
+  const themed = (children: React.ReactNode) => (
+    <CastContext.Provider value={buildCast(agents, 'inception')}>{children}</CastContext.Provider>
+  );
+
+  it('draws the character and keeps the real type badge beside it', () => {
+    render(themed(<Wall agents={agents} focused={null} onFocus={vi.fn()} now={FIXTURE_NOW} />));
+    const names = screen.getAllByTestId('wall-name').map((n) => n.textContent);
+    expect(names[0]).toBe('Cobb');
+    expect(names).not.toContain('team-lead');
+    // The badge is the type, not the name: 'Cobb' + 'team-lead' costs nothing,
+    // and replacing the type would make the wall unreadable.
+    expect(screen.getAllByTestId('wall-type')[0].textContent).toBe('team-lead');
+  });
+
+  it('focuses the real name, so the URL and every route stay joinable', () => {
+    const onFocus = vi.fn();
+    render(themed(<Wall agents={agents} focused={null} onFocus={onFocus} now={FIXTURE_NOW} />));
+    fireEvent.click(screen.getAllByTestId('wall-column')[0]);
+    expect(onFocus).toHaveBeenCalledWith('team-lead');
+  });
+
+  it('is the identity mapping with no theme', () => {
+    render(<Wall agents={agents} focused={null} onFocus={vi.fn()} now={FIXTURE_NOW} />);
+    expect(screen.getAllByTestId('wall-name')[0].textContent).toBe('team-lead');
+  });
+});
+
+// The @ picker is the one place both names have to be live at once: the
+// operator may type either, the row shows both, and the send is on the real one.
+describe('the mention picker under a theme', () => {
+  const themed = () =>
+    render(
+      <CastContext.Provider value={buildCast(agents, 'inception')}>
+        <Wall agents={agents} focused={null} onFocus={vi.fn()} now={FIXTURE_NOW} />
+      </CastContext.Provider>,
+    );
+
+  it('matches the character and the real name alike', () => {
+    themed();
+    const input = screen.getByTestId('composer-input');
+
+    fireEvent.change(input, { target: { value: '@Mal' } });
+    expect(screen.getAllByTestId('route-option')).toHaveLength(1);
+    expect(screen.getAllByTestId('route-option')[0].textContent).toContain('@Mal');
+
+    fireEvent.change(input, { target: { value: '@probe-b' } });
+    expect(screen.getAllByTestId('route-option')).toHaveLength(1);
+    expect(screen.getAllByTestId('route-option')[0].textContent).toContain('@Mal');
+  });
+
+  it('shows the real slot name beside the character', () => {
+    themed();
+    fireEvent.change(screen.getByTestId('composer-input'), { target: { value: '@Mal' } });
+    expect(screen.getByTestId('route-real').textContent).toBe('probe-bravo');
+  });
+
+  it('chips the character and still sends to the real inbox', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response('{}', { status: 200 })));
+    vi.stubGlobal('fetch', fetchMock);
+    themed();
+    const input = screen.getByTestId('composer-input');
+    fireEvent.change(input, { target: { value: '@Mal' } });
+    fireEvent.mouseDown(screen.getAllByTestId('route-option')[0]);
+
+    expect(screen.getByTestId('route-chip').textContent).toBe('@Mal');
+    expect((input as HTMLTextAreaElement).placeholder).toBe('message Mal');
+
+    fireEvent.change(input, { target: { value: 'ship it' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/agents/probe-bravo/message',
+      expect.objectContaining({ body: JSON.stringify({ text: 'ship it' }) }),
+    );
+  });
+
+  it('resolves a character typed by hand, so the chip is not pick-only', () => {
+    themed();
+    const input = screen.getByTestId('composer-input');
+    fireEvent.change(input, { target: { value: '@Mal hello' } });
+    expect(screen.getByTestId('route-chip').textContent).toBe('@Mal');
+    expect((input as HTMLTextAreaElement).value).toBe('hello');
+  });
+});
+
+// The join TranscriptFeed does internally (record-uuid prefix -> siblingGroup)
+// only works end to end if the tree actually reaches the column it draws in —
+// this is the one test proving the wiring, so it cannot silently unmount again.
+it('renders a Task row when TeamState carries a subagent matching the transcript', () => {
+  const withDispatch = agents.map((a) =>
+    a.name === 'team-lead'
+      ? { ...a, transcript: [{ id: 'rec-1#0', marker: '⏺' as const, text: 'Task(scout)', ts: FIXTURE_NOW }] }
+      : a,
+  );
+  render(
+    <Wall
+      agents={withDispatch}
+      focused={null}
+      onFocus={vi.fn()}
+      now={FIXTURE_NOW}
+      subagents={{
+        'team-lead': [
+          {
+            toolUseId: 'toolu_1',
+            name: 'scout',
+            agent: 'team-lead',
+            parent: 'team-lead',
+            depth: 1,
+            spawnIndex: 0,
+            siblingGroup: 'rec-1',
+            state: 'returned',
+            queuedAt: FIXTURE_NOW,
+            tokens: 500,
+            children: [],
+          },
+        ],
+      }}
+    />,
+  );
+  expect(screen.getByTestId('subagent-summary')).toBeTruthy();
+});
+
+// Canvas `4a`: the lead's bottom strip says what the shared list is doing. The
+// other columns keep that slot for the tool the agent is running right now.
+it('summarises the task list under the lead column, and only there', () => {
+  const tasks = [
+    { ...TASK, id: 'T-01', state: 'completed' as const },
+    { ...TASK, id: 'T-02', state: 'blocked' as const },
+    { ...TASK, id: 'T-03', state: 'pending' as const, blockedBy: ['T-02'], openBlockedBy: ['T-02'] },
+  ];
+  renderWall(vi.fn(), tasks);
+  expect(screen.getByTestId('wall-tasklist').textContent).toBe('TaskList — 3 tasks, 2 blocked');
+  expect(screen.getAllByTestId('wall-tasklist')).toHaveLength(1);
+});
+
+it('does not count a completed task as blocked by its own resolved history', () => {
+  expect(
+    taskListSummary([
+      { ...TASK, id: 'T-01', state: 'completed', blockedBy: ['T-00'], openBlockedBy: ['T-00'] },
+    ]),
+  ).toBe('TaskList — 1 task');
+});
+
+// Ruling 24 made a roster of one render the wall as the parent's stream. The
+// view id and the component stayed the same, so for a while the METRICS did
+// too — the canvas measures its stream against the frame and a wall column
+// against 366px, and one was being drawn with the other's numbers.
+describe('a roster of one', () => {
+  it('draws its transcript with the stream metrics, not the column ones', () => {
+    render(
+      <Wall agents={[agents[0]]} focused={agents[0].name} onFocus={vi.fn()} now={FIXTURE_NOW} />,
+    );
+    expect(screen.getByTestId('transcript-feed').style.padding).toBe('15px 16px 10px');
+  });
+
+  // Canvas `8a` opens straight on the transcript. The identity header exists to
+  // tell columns apart, and there is only one; the bar above and the panel row
+  // below already carry the status, elapsed, name and context it repeats.
+  it('opens straight on the transcript, with no identity header', () => {
+    render(
+      <Wall agents={[agents[0]]} focused={agents[0].name} onFocus={vi.fn()} now={FIXTURE_NOW} />,
+    );
+    expect(screen.queryByTestId('wall-name')).toBeNull();
+    expect(screen.getByTestId('transcript-feed')).toBeTruthy();
+  });
+
+  it('keeps the header on a real roster, where it tells the columns apart', () => {
+    renderWall();
+    expect(screen.getAllByTestId('wall-name').length).toBe(agents.length);
+  });
+
+  it('leaves a real roster on the column metrics', () => {
+    renderWall();
+    for (const feed of screen.getAllByTestId('transcript-feed')) {
+      expect(feed.style.padding).toBe('13px 12px');
+    }
+  });
+});

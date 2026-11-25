@@ -1,0 +1,407 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import type { MailMessage, Task } from '../../shared/domain';
+import { buildCast } from '../../shared/cast';
+import { CastContext } from '../state/useCast';
+import { TASK_VIEW_KEY, Tasks } from './Tasks';
+
+afterEach(cleanup);
+// Board is the default; the row-level tests below read the rows view.
+beforeEach(() => window.localStorage.setItem(TASK_VIEW_KEY, 'rows'));
+
+// fixtures/tasks.json: task 1 was claimed and completed by probe-alpha; task 2 in
+// its unclaimed pending snapshot.
+const TASKS: Task[] = [
+  {
+    id: '1',
+    subject: 'SPIKE probe A — report your identity',
+    description:
+      'Throwaway spike task. Claim this task with TaskUpdate (set owner to your own name and status to in_progress), then use SendMessage to send team-lead a one-line message saying which task you claimed. Then mark it completed. Do nothing else.',
+    activeForm: 'Probing identity A',
+    owner: 'probe-alpha',
+    state: 'completed',
+    blocks: [],
+    blockedBy: [],
+    metadata: { complexity: 'judgment', model: 'opus', effort: 'high', why: 'spike setup' },
+  },
+  {
+    id: '2',
+    subject: 'SPIKE probe B — report your identity',
+    description:
+      'Throwaway spike task. Claim this task with TaskUpdate (set owner to your own name and status to in_progress), then use SendMessage to send team-lead a one-line message saying which task you claimed. Then mark it completed. Do nothing else.',
+    activeForm: 'Probing identity B',
+    state: 'pending',
+    blocks: [],
+    blockedBy: [],
+  },
+];
+
+// fixtures/inbox-snapshots.json (sent times) plus the batched delivery time from
+// fixtures/lead-transcript-teammate-frames.json for the backfilled frame.
+const MAIL: MailMessage[] = [
+  {
+    msgId: '48ba3528-7a03-4d43-ab32-b3ef759ff2bd',
+    from: 'probe-charlie',
+    to: 'team-lead',
+    text: 'probe-charlie reporting: running on a different model so the console can prove per-agent model resolution.',
+    summary: 'probe-charlie alive',
+    ts: Date.parse('2026-08-27T15:10:15.734Z'),
+    tsIsDelivery: false,
+    read: true,
+    color: 'yellow',
+  },
+  {
+    msgId: '4a236089-e8f5-4688-bca2-e47c6f0d8310',
+    from: 'probe-alpha',
+    to: 'team-lead',
+    text: 'probe-alpha reporting: I claimed task 1. This is spike traffic.',
+    summary: 'probe-alpha claimed task 1',
+    ts: Date.parse('2026-08-27T15:10:17.891Z'),
+    tsIsDelivery: false,
+    read: true,
+    color: 'blue',
+  },
+  {
+    msgId: 'c6390c86-1b02-43f4-b8bb-0a58ef1afd66',
+    from: 'probe-charlie',
+    to: 'team-lead',
+    text: '{"type":"idle_notification","from":"probe-charlie","timestamp":"2026-08-27T15:10:22.099Z","idleReason":"available"}',
+    ts: Date.parse('2026-08-27T15:12:17.951Z'),
+    tsIsDelivery: true,
+    read: true,
+    color: 'yellow',
+    protocol: { type: 'idle_notification', data: { from: 'probe-charlie', idleReason: 'available' } },
+  },
+];
+
+function renderTasks() {
+  render(<Tasks tasks={TASKS} teamName="session-98b0b4a7" />);
+}
+
+function renderOne(task: Partial<Task>) {
+  render(<Tasks tasks={[{ ...TASKS[1], ...task }]} teamName="session-98b0b4a7" />);
+  return screen.getByTestId('task-row');
+}
+
+const filledCells = (row: HTMLElement) =>
+  within(row)
+    .getAllByTestId('step-cell')
+    .filter((cell) => cell.style.background !== 'var(--color-neutral-900)');
+
+// jsdom's CSSOM always serialises the `flex` shorthand back out in its
+// longhand form, so `flex: '1'` round-trips as `'1 1 0%'` even though
+// that's exactly what was set. Compare against the same round-trip instead
+// of the literal keyword (see Portrait.test.tsx for the same workaround).
+function domFlex(css: string): string {
+  const probe = document.createElement('div');
+  probe.style.flex = css;
+  return probe.style.flex;
+}
+
+describe('Tasks — left pane', () => {
+  it('uses the design column widths', () => {
+    renderTasks();
+    expect(screen.getByText('TASK').style.width).toBe('44px');
+    expect(screen.getByText('DESCRIPTION').style.flex).toBe(domFlex('1'));
+    expect(screen.getByText('STATE').style.width).toBe('118px');
+    expect(screen.getByText('MODEL').style.width).toBe('60px');
+    expect(screen.getByText('OWNER').style.width).toBe('80px');
+    expect(screen.getByText('DEPENDS ON').style.width).toBe('76px');
+  });
+
+  it('renders each task as a hairline-bottomed row', () => {
+    renderTasks();
+    const rows = screen.getAllByTestId('task-row');
+    expect(rows).toHaveLength(2);
+    expect(rows[0].style.padding).toBe('12px 16px');
+    expect(rows[0].style.fontSize).toBe('11.5px');
+    expect(rows[0].style.borderBottom).toBe('1px solid var(--color-neutral-900)');
+  });
+
+  // Top-aligned, unlike a stream: `tail` here pushed the first task 90-170px
+  // down the pane and the last ones below the fold.
+  it('scrolls on its own, reading top-down', () => {
+    renderTasks();
+    const list = screen.getAllByTestId('task-row')[0].parentElement!;
+    expect(list.className).toBe('tscroll');
+    expect(list.style.overflow).toBe('');
+  });
+
+  // The symptom this prevents: a lead that spawned teammates with the Agent
+  // tool and never called TaskCreate leaves a genuinely empty list, and bare
+  // column headers over a blank pane read as a console that failed to load.
+  it('says so when the team never used the shared list', () => {
+    render(<Tasks tasks={[]} teamName="session-98b0b4a7" />);
+    expect(screen.getByTestId('tasks-empty').textContent).toBe(
+      "no tasks \u2014 this team hasn't used the shared list",
+    );
+    expect(screen.queryAllByTestId('task-row')).toHaveLength(0);
+  });
+
+  it('shows the owner, or "unassigned" when nobody has claimed it', () => {
+    renderTasks();
+    const rows = screen.getAllByTestId('task-row');
+    expect(within(rows[0]).getByTestId('task-owner').textContent).toBe('probe-alpha');
+    expect(within(rows[1]).getByTestId('task-owner').textContent).toBe('unassigned');
+  });
+
+  // task 2 carries no metadata at all — the common case for a task from
+  // another session, or one created before this field existed.
+  it('shows metadata.model as its tier name, or an em dash when metadata is absent', () => {
+    renderTasks();
+    const rows = screen.getAllByTestId('task-row');
+    expect(within(rows[0]).getByTestId('task-model').textContent).toBe('opus');
+    expect(within(rows[1]).getByTestId('task-model').textContent).toBe('—');
+  });
+
+  // A dependency that finished is still a dependency. Dropping its id made the
+  // cell read `—` for a task that plainly has one, and the prototype keeps it.
+  it('keeps a blocker id in DEPENDS ON after the blocker completes', () => {
+    render(
+      <Tasks
+        tasks={[{ ...TASKS[1], blockedBy: ['1'], openBlockedBy: [] }]}
+        teamName="session-98b0b4a7"
+      />,
+    );
+    expect(screen.getByTestId('task-deps').textContent).toBe('1');
+  });
+
+  it('comma-separates several dependency ids', () => {
+    render(
+      <Tasks
+        tasks={[{ ...TASKS[1], blockedBy: ['T-02', 'T-07'] }]}
+        teamName="session-98b0b4a7"
+      />,
+    );
+    expect(screen.getByTestId('task-deps').textContent).toBe('T-02, T-07');
+  });
+
+  // Ruling 1: this register measured 2.69:1 at neutral-700. The column header,
+  // the footer note and the dependency ids are all the same quiet text.
+  it('draws the quiet chrome register at neutral-600', () => {
+    renderTasks();
+    expect(screen.getByText('TASK').parentElement!.style.color).toBe('var(--color-neutral-600)');
+    expect(screen.getByTestId('tasks-footer').style.color).toBe('var(--color-neutral-600)');
+    expect(screen.getAllByTestId('task-deps')[0].style.color).toBe('var(--color-neutral-600)');
+  });
+
+  it('shows the state label, and an em dash for no dependencies', () => {
+    renderTasks();
+    const rows = screen.getAllByTestId('task-row');
+    expect(within(rows[0]).getByTestId('task-state').textContent).toBe('completed');
+    expect(within(rows[1]).getByTestId('task-state').textContent).toBe('pending');
+    expect(within(rows[0]).getByTestId('task-deps').textContent).toBe('—');
+  });
+
+  it('names the on-disk task directory and the locking rule in the footer', () => {
+    renderTasks();
+    const footer = screen.getByTestId('tasks-footer');
+    expect(within(footer).getByText('~/.claude/tasks/session-98b0b4a7/')).toBeTruthy();
+    expect(
+      within(footer).getByText('claiming is file-locked · completing a task unblocks its dependents · cards move when the file does'),
+    ).toBeTruthy();
+  });
+});
+
+// Task completion is countable, so a bar is honest here in a way a per-task
+// percentage would not be. The legend numbers are the segment widths' source,
+// so the two cannot disagree on screen.
+describe('Tasks — progress strip', () => {
+  const MIXED: Task[] = [
+    { ...TASKS[0], id: 'a', state: 'completed' },
+    { ...TASKS[1], id: 'b', state: 'completed' },
+    { ...TASKS[1], id: 'c', state: 'in_progress' },
+    { ...TASKS[1], id: 'd', state: 'blocked' },
+    { ...TASKS[1], id: 'e', state: 'plan_pending' },
+    { ...TASKS[1], id: 'f', state: 'failed' },
+    { ...TASKS[1], id: 'g', state: 'pending' },
+    { ...TASKS[1], id: 'h', state: 'pending' },
+  ];
+
+  it('shows the completed percentage and the count it came from', () => {
+    render(<Tasks tasks={MIXED} teamName="session-98b0b4a7" />);
+    expect(screen.getByTestId('progress-pct').textContent).toBe('25%');
+    expect(screen.getByTestId('progress-count').textContent).toBe('2 of 8 done');
+  });
+
+  // plan approval and failed fold into blocked so the four always sum to the
+  // task count — a fifth state would otherwise leave a gap in the bar.
+  it('segments the bar by state, four segments summing to the task count', () => {
+    render(<Tasks tasks={MIXED} teamName="session-98b0b4a7" />);
+    const counts = screen.getAllByTestId('legend-count').map((n) => Number(n.textContent));
+    expect(counts).toEqual([2, 1, 3, 2]);
+    expect(counts.reduce((a, b) => a + b, 0)).toBe(MIXED.length);
+  });
+
+  it('draws each segment at the width its own legend number implies', () => {
+    render(<Tasks tasks={MIXED} teamName="session-98b0b4a7" />);
+    const counts = screen.getAllByTestId('legend-count').map((n) => Number(n.textContent));
+    const widths = screen.getAllByTestId('progress-segment').map((s) => s.style.width);
+    expect(widths).toEqual(counts.map((n) => `${(n / MIXED.length) * 100}%`));
+  });
+
+  // A per-task percentage would be invented: an agent never reports how far
+  // through a task it is.
+  it('draws no bar on a task row', () => {
+    render(<Tasks tasks={MIXED} teamName="session-98b0b4a7" />);
+    const rows = screen.getAllByTestId('task-row');
+    for (const row of rows) {
+      expect(within(row).queryByTestId('progress-segment')).toBeNull();
+    }
+  });
+
+  it('has nothing to draw when the team never used the list', () => {
+    render(<Tasks tasks={[]} teamName="session-98b0b4a7" />);
+    expect(screen.queryByTestId('progress-pct')).toBeNull();
+  });
+});
+
+// The ladder every task actually climbs, drawn as four cells filled to the
+// real step — observable state, not an estimate.
+describe('Tasks — per-task stepper', () => {
+  it('fills cells to the step the state has actually reached', () => {
+    expect(filledCells(renderOne({ state: 'blocked' }))).toHaveLength(1);
+    cleanup();
+    expect(filledCells(renderOne({ state: 'pending' }))).toHaveLength(2);
+    cleanup();
+    expect(filledCells(renderOne({ state: 'in_progress' }))).toHaveLength(3);
+    cleanup();
+    expect(filledCells(renderOne({ state: 'plan_pending' }))).toHaveLength(3);
+    cleanup();
+    expect(filledCells(renderOne({ state: 'failed' }))).toHaveLength(3);
+    cleanup();
+    expect(filledCells(renderOne({ state: 'completed' }))).toHaveLength(4);
+  });
+
+  it('tints the fill by state', () => {
+    expect(filledCells(renderOne({ state: 'completed' }))[0].style.background)
+      .toBe('var(--color-accent-500)');
+    cleanup();
+    expect(filledCells(renderOne({ state: 'blocked' }))[0].style.background).toBe('var(--warn)');
+    cleanup();
+    expect(filledCells(renderOne({ state: 'failed' }))[0].style.background).toBe('var(--fail)');
+    cleanup();
+    expect(filledCells(renderOne({ state: 'in_progress' }))[0].style.background)
+      .toBe('var(--color-accent-300)');
+  });
+
+  it('names the four steps in its title', () => {
+    const row = renderOne({ state: 'in_progress' });
+    expect(within(row).getByTestId('task-state').title).toBe(
+      'created → unblocked → claimed → completed · at step 3 of 4',
+    );
+  });
+
+  it('adds the dependency tally to the title where a task has dependencies', () => {
+    const row = renderOne({ state: 'blocked', blockedBy: ['1', '2', '3'], openBlockedBy: ['3'] });
+    expect(within(row).getByTestId('task-state').title).toBe(
+      'created → unblocked → claimed → completed · at step 1 of 4 · 2 of 3 dependencies done',
+    );
+  });
+
+  // No openBlockedBy means the server has resolved none of them, which is the
+  // conservative reading of a field it always sends.
+  it('counts an absent open list as nothing resolved', () => {
+    const row = renderOne({ state: 'blocked', blockedBy: ['1', '2'] });
+    expect(within(row).getByTestId('task-state').title).toContain('0 of 2 dependencies done');
+  });
+});
+
+
+// The OWNER cell is the agent, so it is cast. The task id, the state and the
+// dependency ids are readouts and are never renamed.
+it('casts the owner cell and nothing else in the row', () => {
+  const agents = [
+    { name: 'team-lead', agentType: 'team-lead', isLead: true },
+    { name: 'probe-alpha', agentType: 'general-purpose', isLead: false },
+  ];
+  render(
+    <CastContext.Provider value={buildCast(agents, 'inception')}>
+      <Tasks tasks={TASKS} teamName="session-98b0b4a7" />
+    </CastContext.Provider>,
+  );
+  const owners = screen.getAllByTestId('task-owner').map((o) => o.textContent);
+  expect(owners).toContain('Saito');
+  expect(owners).not.toContain('probe-alpha');
+  expect(owners).toContain('unassigned');
+});
+
+describe('Tasks — board', () => {
+  afterEach(() => window.localStorage.clear());
+
+  const LADDER: Task[] = [
+    { ...TASKS[1], id: '1', state: 'completed' },
+    { ...TASKS[1], id: '2', state: 'pending', blockedBy: ['1'], openBlockedBy: [] },
+    { ...TASKS[1], id: '3', state: 'blocked', blockedBy: ['1', '9'], openBlockedBy: ['9'] },
+    { ...TASKS[1], id: '4', state: 'in_progress', owner: 'probe-alpha' },
+    { ...TASKS[1], id: '5', state: 'plan_pending', owner: 'probe-alpha' },
+    { ...TASKS[1], id: '6', state: 'failed', owner: 'probe-alpha' },
+  ];
+
+  function openBoard(tasks = LADDER) {
+    render(<Tasks tasks={tasks} teamName="session-98b0b4a7" />);
+    fireEvent.click(screen.getByRole('button', { name: 'board' }));
+    return screen.getAllByTestId('board-column');
+  }
+
+  const ids = (column: HTMLElement) =>
+    within(column).queryAllByTestId('board-card').map((card) => card.firstElementChild!.firstElementChild!.textContent);
+
+  it('lays tasks out on the ladder, with plan approval and failed still in progress', () => {
+    const columns = openBoard();
+    expect(columns.map(ids)).toEqual([['3'], ['2'], ['4', '5', '6'], ['1']]);
+    expect(screen.getAllByTestId('board-count').map((c) => c.textContent)).toEqual(['1', '1', '3', '1']);
+  });
+
+  it('flags plan approval and failed cards by edge and label', () => {
+    const cards = within(openBoard()[2]).getAllByTestId('board-card');
+    expect(cards[0].style.border).toBe('1px solid var(--color-neutral-900)');
+    expect(cards[1].style.border).toBe('1px solid var(--warn)');
+    expect(cards[2].style.border).toBe('1px solid var(--fail)');
+    expect(screen.getAllByTestId('card-note').map((n) => n.textContent)).toEqual(['plan approval', 'failed']);
+  });
+
+  it('says what a card needs and how much of it is done', () => {
+    const blocked = within(openBoard()[0]).getByTestId('card-deps');
+    expect(blocked.textContent).toBe('needs 1, 9 · 1/2 done');
+  });
+
+  it('shows a none box in an empty column', () => {
+    const columns = openBoard([LADDER[0]]);
+    expect(within(columns[0]).getByText('none')).toBeTruthy();
+    expect(within(columns[3]).queryByText('none')).toBeNull();
+  });
+
+  it('opens on the board when no view was chosen, with board as the first pill', () => {
+    window.localStorage.clear();
+    render(<Tasks tasks={LADDER} teamName="session-98b0b4a7" />);
+    expect(screen.getByTestId('tasks-board')).toBeTruthy();
+    expect(screen.getAllByTestId('tasks-view-toggle').map((b) => b.textContent)).toEqual(['board', 'rows']);
+  });
+
+  it('fills an in-progress card to its reported progress', () => {
+    const tasks = [{ ...TASKS[1], id: '4', state: 'in_progress' as const, metadata: { progress: 60 } }];
+    const card = within(openBoard(tasks)[2]).getByTestId('board-card');
+    const label = within(card).getByTestId('card-progress');
+    expect(label.textContent).toBe('60%');
+    expect(card.style.background).toContain('60%');
+  });
+
+  it('renders an in-progress card with no progress exactly as before', () => {
+    const tasks = [{ ...TASKS[1], id: '4', state: 'in_progress' as const }];
+    const card = within(openBoard(tasks)[2]).getByTestId('board-card');
+    expect(within(card).queryByTestId('card-progress')).toBeNull();
+  });
+
+  it('remembers the chosen view across mounts', () => {
+    openBoard();
+    expect(window.localStorage.getItem(TASK_VIEW_KEY)).toBe('board');
+    cleanup();
+    render(<Tasks tasks={LADDER} teamName="session-98b0b4a7" />);
+    expect(screen.getByTestId('tasks-board')).toBeTruthy();
+    expect(screen.queryAllByTestId('task-row')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'rows' }));
+    expect(screen.getAllByTestId('task-row')).toHaveLength(6);
+  });
+});

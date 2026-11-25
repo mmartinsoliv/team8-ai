@@ -1,0 +1,651 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { promises as fs, readFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import catalog from '../shared/catalog.json';
+import {
+  AGENT_ENV_VARS,
+  backupPathFor,
+  HOOK_EVENTS,
+  HOOK_TIMEOUT_SECONDS,
+  MODEL_FORCE_WARNING,
+  PERMISSION_HOOK_TIMEOUT_SECONDS,
+  PINNED_CLAUDE_VERSION,
+  SUBAGENT_PROMPT_CACHE_TTL,
+  checkClaudeVersion,
+  hookBlock,
+  mergeHookBlock,
+  removeHookBlock,
+  runSetup,
+  type CommandHook,
+} from './setup';
+
+interface ObserveHook { type: string; command: string; timeout: number }
+interface HookEntry { matcher?: string; hooks: ObserveHook[] }
+
+let dir: string;
+
+beforeEach(async () => {
+  dir = await fs.mkdtemp(path.join(os.tmpdir(), 'setup-'));
+});
+afterEach(async () => {
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+describe('hookBlock', () => {
+  const block = hookBlock(4823);
+
+  it('round-trips as valid JSON', () => {
+    expect(JSON.parse(JSON.stringify(block))).toEqual(block);
+  });
+
+  it('registers every event as a command hook posting to the right port', () => {
+    expect(Object.keys(block.hooks)).toEqual([...HOOK_EVENTS]);
+    for (const event of HOOK_EVENTS) {
+      const entries = block.hooks[event] as HookEntry[];
+      // Both tool arms carry extra entries: the command-hook launcher on
+      // the Agent tool, and the same launcher on Workflow — a different tool,
+      // which the Agent matcher can never see. PreToolUse adds its two gates,
+      // on the task tools and on Agent; PostToolUse adds the inbox-delivery
+      // hook, gated on agent_id so the lead never starts it.
+      const carriesLauncher = event === 'PreToolUse' || event === 'PostToolUse';
+      expect(entries).toHaveLength(event === 'PreToolUse' ? 5 : carriesLauncher ? 4 : 1);
+      expect(entries.filter((e) => e.matcher === 'TaskCreate|TaskUpdate')).toHaveLength(event === 'PreToolUse' ? 1 : 0);
+      expect(entries.filter((e) => e.matcher === 'Agent')).toHaveLength(event === 'PreToolUse' ? 2 : carriesLauncher ? 1 : 0);
+      expect(entries.filter((e) => e.matcher === 'Workflow')).toHaveLength(carriesLauncher ? 1 : 0);
+      // SessionStart carries one extra hook, console-hint.sh (console upgrades
+      // and the resume note), appended to the same entry as the observation
+      // curl below.
+      expect(entries[0].hooks).toHaveLength(event === 'SessionStart' ? 2 : 1);
+      // A command hook, not an http one: Claude Code renders an http hook's
+      // connection refusal as a "<event> hook error" on EVERY tool call while
+      // the console is down. This posts through curl and exits 0 instead.
+      expect(entries[0].hooks[0].type).toBe('command');
+      expect(entries[0].hooks[0].command).toContain('http://127.0.0.1:4823/hook');
+      expect(entries[0].hooks[0].command).toContain('exit 0');
+    }
+  });
+
+  it('registers the task gate on PreToolUse, for TaskCreate and TaskUpdate only', () => {
+    const gates = (block.hooks.PreToolUse as HookEntry[]).filter((e) => e.matcher === 'TaskCreate|TaskUpdate');
+    expect(gates).toHaveLength(1);
+    expect(gates[0].hooks).toHaveLength(1);
+    expect(gates[0].hooks[0].type).toBe('command');
+    expect(gates[0].hooks[0].command).toContain('task-gate.sh');
+    expect(gates[0].hooks[0].command).not.toContain('http://127.0.0.1');
+    expect(Object.keys(block.hooks)).not.toContain('TaskCreated');
+    expect(Object.keys(block.hooks)).not.toContain('TaskCompleted');
+  });
+
+  it('registers the agent gate on PreToolUse, for Agent, after the launcher', () => {
+    const agents = (block.hooks.PreToolUse as HookEntry[]).filter((e) => e.matcher === 'Agent');
+    expect(agents).toHaveLength(2);
+    expect(agents[0].hooks[0].command).toContain('console-launch.sh');
+    expect(agents[1].hooks).toHaveLength(1);
+    expect(agents[1].hooks[0].type).toBe('command');
+    expect(agents[1].hooks[0].command).toContain('agent-gate.sh');
+    expect(agents[1].hooks[0].command).not.toContain('http://127.0.0.1');
+  });
+
+  it('sets an explicit timeout on every entry, long only for the deliberate hold', () => {
+    for (const event of HOOK_EVENTS) {
+      const hook = (block.hooks[event] as HookEntry[])[0].hooks[0];
+      expect(typeof hook.timeout).toBe('number');
+      expect(hook.timeout).toBe(
+        event === 'PermissionRequest' ? PERMISSION_HOOK_TIMEOUT_SECONDS : HOOK_TIMEOUT_SECONDS,
+      );
+    }
+    // Seconds, not milliseconds: the harness would otherwise let a hung console
+    // hold a turn for 83 minutes, and a permission request for a week.
+    expect(HOOK_TIMEOUT_SECONDS).toBe(5);
+    expect(PERMISSION_HOOK_TIMEOUT_SECONDS).toBe(600);
+  });
+
+  it('carries a matcher only on the tool events', () => {
+    expect((block.hooks.PreToolUse as HookEntry[])[0].matcher).toBe('*');
+    expect((block.hooks.PostToolUse as HookEntry[])[0].matcher).toBe('*');
+    expect((block.hooks.PermissionRequest as HookEntry[])[0].matcher).toBe('*');
+    expect((block.hooks.SessionStart as HookEntry[])[0].matcher).toBeUndefined();
+  });
+
+  it('points both status lines at their own endpoints', () => {
+    expect(block.statusLine.type).toBe('command');
+    expect(block.statusLine.command).toContain('http://127.0.0.1:4823/statusline');
+    expect(block.subagentStatusLine.command).toContain('http://127.0.0.1:4823/substatus');
+  });
+
+  it('turns on agent teams and the task tools, which no plugin manifest can', () => {
+    expect(block.env).toEqual({
+      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+      CLAUDE_CODE_ENABLE_TODO_TOOLS: '1',
+    });
+  });
+
+  it('honours a non-default port', () => {
+    const other = hookBlock(4400);
+    expect(((other.hooks.Stop as HookEntry[])[0].hooks[0]).command).toContain(
+      'http://127.0.0.1:4400/hook',
+    );
+    expect(other.statusLine.command).toContain(':4400/statusline');
+  });
+
+  it('propagates the port to the launcher, which otherwise defaults to 4823', () => {
+    const entry = hookBlock(5000).hooks.PostToolUse.find((e) => e.matcher === 'Agent')!;
+    expect((entry.hooks[0] as CommandHook).command).toMatch(/^OCTO_PORT=5000 /);
+  });
+
+  it('pins the same claude version as the model catalog', () => {
+    expect(catalog.version).toBe(PINNED_CLAUDE_VERSION);
+  });
+
+  it.each(['PreToolUse', 'PostToolUse'] as const)(
+    'registers the launcher as a %s:Agent command hook with an explicit timeout',
+    (event) => {
+      const entry = block.hooks[event].find((e) => e.matcher === 'Agent');
+      expect(entry).toBeDefined();
+      expect(entry!.hooks[0]).toMatchObject({ type: 'command', timeout: 5 });
+      expect((entry!.hooks[0] as CommandHook).command).toMatch(
+        /^OCTO_PORT=4823 '.*console-launch\.sh'$/,
+      );
+    },
+  );
+
+  it('does not register a SubagentStart hook — systemMessage is stripped there', () => {
+    expect(hookBlock(4823).hooks.SubagentStart).toBeUndefined();
+  });
+
+  it('uninstall removes the launcher as well as the http hooks', () => {
+    const installed = mergeHookBlock({}, 4823);
+    const cleaned = removeHookBlock(installed) as { hooks?: Record<string, unknown[]> };
+    expect(cleaned.hooks?.PostToolUse ?? []).toHaveLength(0);
+  });
+});
+
+describe("the plugin's own hooks.json", () => {
+  // The plugin registers these itself, so a plugin user never has to write hooks
+  // into settings.json. Both copies have to describe the same observation, or
+  // whichever half you happen to have installed silently disagrees.
+  const shipped = JSON.parse(
+    readFileSync(new URL('../../plugin/hooks/hooks.json', import.meta.url), 'utf8'),
+  ) as { hooks: Record<string, HookEntry[]> };
+
+  it('registers every event the settings installer would, on the default port', () => {
+    expect(Object.keys(shipped.hooks)).toEqual([...HOOK_EVENTS]);
+    // Only the LAUNCHER's command legitimately differs between the two copies
+    // (absolute path here, ${CLAUDE_PLUGIN_ROOT} there). The observation hooks
+    // are command hooks too now, so masking every command would let the two
+    // copies POST to different places and still pass.
+    //
+    // The restarter each observation hook falls back to splits the same way and
+    // for the same reason, so its PATH is masked as well — but only the path.
+    // The curl call wrapped around it is still compared in full, so the copies
+    // still cannot drift to different ports, timeouts or routes. The SessionStart
+    // hint script (absolute path here, ${CLAUDE_PLUGIN_ROOT} there) is the same
+    // kind of legitimate difference, so it is masked the same way. So is the
+    // inbox-delivery hook's own script path.
+    const maskRestart = (command: string) =>
+      command
+        .replace(/(['"])[^'"]*\/bin\/console-restart\.sh\1/, '<restart>')
+        .replace(/(['"])[^'"]*\/bin\/console-hint\.sh\1/, '<hint>')
+        .replace(/(['"])[^'"]*\/bin\/task-gate\.sh\1/, '<task-gate>')
+        .replace(/(['"])[^'"]*\/bin\/agent-gate\.sh\1/, '<agent-gate>')
+        .replace(/(['"])[^'"]*\/dist\/hooks\/inbox-deliver\.js\1/, '<inbox-deliver>');
+    const normalise = (entries: HookEntry[]) =>
+      JSON.stringify(
+        entries.map((e) =>
+          // Both launcher arms — Agent and Workflow — legitimately differ:
+          // absolute path in the generated block, ${CLAUDE_PLUGIN_ROOT} in the
+          // shipped one. Everything else must match byte for byte.
+          (e.matcher === 'Agent' || e.matcher === 'Workflow') &&
+          (e.hooks[0] as { command: string }).command.includes('console-launch.sh')
+            ? { ...e, hooks: [{ ...e.hooks[0], command: '<launcher>' }] }
+            : {
+                ...e,
+                hooks: e.hooks.map((h) => ({
+                  ...h,
+                  command: maskRestart((h as { command: string }).command),
+                })),
+              },
+        ),
+      );
+    const block = hookBlock(4823);
+    for (const event of HOOK_EVENTS) {
+      expect(normalise(shipped.hooks[event])).toBe(
+        normalise(block.hooks[event] as unknown as HookEntry[]),
+      );
+    }
+  });
+
+  it('resolves the launcher through the plugin root, not a machine-local path', () => {
+    const entry = shipped.hooks.PreToolUse.find((e) => e.matcher === 'Agent');
+    expect((entry!.hooks[0] as unknown as { command: string }).command).toBe(
+      '"${CLAUDE_PLUGIN_ROOT}/bin/console-launch.sh"',
+    );
+  });
+
+  it('registers the launcher against the Workflow tool as well as Agent', () => {
+    for (const event of ['PreToolUse', 'PostToolUse'] as const) {
+      const entry = shipped.hooks[event].find((e) => e.matcher === 'Workflow');
+      expect(entry, `${event} has no Workflow matcher`).toBeDefined();
+      expect((entry!.hooks[0] as unknown as { command: string }).command).toContain(
+        'console-launch.sh',
+      );
+    }
+  });
+
+  it('resolves the restarter through the plugin root too', () => {
+    for (const event of HOOK_EVENTS) {
+      const observation = shipped.hooks[event].find(
+        (e) => e.matcher !== 'Agent' && e.matcher !== 'Workflow',
+      );
+      const command = (observation!.hooks[0] as unknown as { command: string }).command;
+      expect(command).toContain('"${CLAUDE_PLUGIN_ROOT}/bin/console-restart.sh"');
+    }
+  });
+
+  describe('its inbox-delivery hook', () => {
+    // Hooks are user-scope, so this runs after every tool call of every agent on
+    // the machine, and only a teammate has an inbox.
+    const command = shipped.hooks.PostToolUse.flatMap((e) => e.hooks).find((h) =>
+      h.command.includes('inbox-deliver.js'),
+    )!.command;
+    const teammate = 'atrack-a-0123456789abcdef';
+    const quiet = { status: 0, stdout: '', stderr: '' };
+
+    beforeEach(async () => {
+      // Echoes what it is handed, so any output means node started.
+      await fs.mkdir(path.join(dir, 'dist', 'hooks'), { recursive: true });
+      await fs.writeFile(path.join(dir, 'dist', 'hooks', 'inbox-deliver.js'), 'process.stdin.pipe(process.stdout);\n');
+    });
+
+    // The way Claude Code runs it: /bin/sh -c, the payload one line of JSON.
+    const run = (payload: object, root = dir) => {
+      const result = spawnSync('/bin/sh', ['-c', command], {
+        input: `${JSON.stringify(payload)}\n`,
+        env: { ...process.env, CLAUDE_PLUGIN_ROOT: root },
+        encoding: 'utf8',
+        timeout: HOOK_TIMEOUT_SECONDS * 1000,
+      });
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+    };
+    // Claude Code's own fields come ahead of the tool's. The session id and the
+    // paths carry hyphens, so only agent_id may supply one.
+    const postToolUse = (fields: Record<string, unknown>, toolResponse: unknown = { ok: true }) => ({
+      session_id: 'c27397df-f0ba-4b82-9a4c-eb0fb1c80d0e',
+      transcript_path: '/Users/me/.claude/projects/-Users-me-code-team-8/c27397df.jsonl',
+      cwd: '/Users/me/code/team-8',
+      permission_mode: 'default',
+      ...fields,
+      hook_event_name: 'PostToolUse',
+      tool_name: 'Read',
+      tool_input: { file_path: '/Users/me/code/team-8/src/a.ts' },
+      tool_response: toolResponse,
+      tool_use_id: 'toolu_1',
+    });
+
+    it.each([teammate, 'track-a@session-1'])('starts node for teammate %s and hands it the payload', (id) => {
+      const payload = postToolUse({ agent_id: id, agent_type: 'team8:executor' });
+      expect(run(payload)).toEqual({ ...quiet, stdout: JSON.stringify(payload) });
+    });
+
+    it('never starts node for a plain subagent or workflow agent, or for the lead', () => {
+      expect(run(postToolUse({ agent_id: 'a0123456789abcdef', agent_type: 'general-purpose' }))).toEqual(quiet);
+      expect(run(postToolUse({}))).toEqual(quiet);
+    });
+
+    it("ignores the teammate a lead's Agent call names in its response", () => {
+      expect(run(postToolUse({}, { status: 'teammate_spawned', agent_id: teammate }))).toEqual(quiet);
+    });
+
+    it("gets through a lead's large tool response well inside the hook timeout", () => {
+      // Stripping a prefix from the whole payload, with no agent_id to stop at,
+      // scans every prefix: seconds per 30 KB under bash 3.2 and dash.
+      expect(run(postToolUse({}, { content: '"quoted", hyphen-ated\n'.repeat(10_000) }))).toEqual(quiet);
+    });
+
+    it('exits 0 when node cannot run the script', () => {
+      expect(run(postToolUse({ agent_id: teammate }), path.join(dir, 'missing'))).toEqual(quiet);
+    });
+  });
+});
+
+describe("the plugin's own settings.json", () => {
+  // A plugin's settings.json may carry only `agent` and `subagentStatusLine`
+  // (Claude Code 2.1.296), as the lowest-precedence layer. This one carries the
+  // console's status line, the same command the installer writes on the
+  // default port, so the two cannot drift.
+  it('carries exactly the subagent status line the installer writes on the default port', () => {
+    const shipped = JSON.parse(
+      readFileSync(new URL('../../plugin/settings.json', import.meta.url), 'utf8'),
+    ) as Record<string, unknown>;
+    expect(shipped).toEqual({ subagentStatusLine: hookBlock(4823).subagentStatusLine });
+  });
+});
+
+describe('a POST that finds nothing listening', () => {
+  // Staying silent about a refused connection is only half the fix: every event
+  // that lands while the console is down is an event the wall never shows. The
+  // observation hooks hand a failed POST to the restarter, and still exit 0 so
+  // the refusal never reaches the operator's screen.
+  it('falls back to the restarter on every observed event', () => {
+    const block = hookBlock(4823);
+    for (const event of HOOK_EVENTS) {
+      const command = (block.hooks[event][0].hooks[0] as unknown as { command: string }).command;
+      expect(command).toContain('|| OCTO_PORT=4823 ');
+      expect(command).toContain('console-restart.sh');
+      expect(command.endsWith('; exit 0')).toBe(true);
+    }
+  });
+
+  it('carries a non-default port across to the restarter', () => {
+    const command = (hookBlock(4400).hooks.Stop[0].hooks[0] as unknown as { command: string })
+      .command;
+    expect(command).toContain('http://127.0.0.1:4400/hook');
+    expect(command).toContain('|| OCTO_PORT=4400 ');
+  });
+});
+
+describe('mergeHookBlock / removeHookBlock', () => {
+  it('adds the block without disturbing unrelated settings', () => {
+    const merged = mergeHookBlock({ model: 'opus', hooks: { Stop: [{ hooks: [{ type: 'command', command: 'say done' }] }] } }, 4823);
+    expect(merged.model).toBe('opus');
+    const stop = (merged.hooks as Record<string, HookEntry[]>).Stop;
+    expect(stop).toHaveLength(2);
+    expect((stop[0].hooks[0] as unknown as { command: string }).command).toBe('say done');
+    expect(stop[1].hooks[0].command).toContain('http://127.0.0.1:4823/hook');
+  });
+
+  it('claims the status line only when nobody else has it', () => {
+    const mine = { type: 'command', command: 'ccstatusline' };
+    expect(mergeHookBlock({ statusLine: mine }, 4823).statusLine).toEqual(mine);
+    expect(mergeHookBlock({}, 4823).statusLine).toEqual(hookBlock(4823).statusLine);
+  });
+
+  it('still moves its own status line to a new port', () => {
+    const moved = mergeHookBlock(mergeHookBlock({}, 4823), 4400);
+    expect((moved.statusLine as { command: string }).command).toContain(':4400/statusline');
+  });
+
+  it('is idempotent', () => {
+    const once = mergeHookBlock({}, 4823);
+    expect(mergeHookBlock(once, 4823)).toEqual(once);
+  });
+
+  it('removes exactly what it added', () => {
+    const original = { model: 'opus', hooks: { Stop: [{ hooks: [{ type: 'command', command: 'say done' }] }] } };
+    expect(removeHookBlock(mergeHookBlock(original, 4823))).toEqual(original);
+  });
+
+  it('adds the env vars beside the ones already there', () => {
+    const merged = mergeHookBlock({ env: { FOO: 'bar' } }, 4823);
+    expect(merged.env).toEqual({
+      FOO: 'bar',
+      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+      CLAUDE_CODE_ENABLE_TODO_TOOLS: '1',
+    });
+    expect(removeHookBlock(merged).env).toEqual({ FOO: 'bar' });
+  });
+
+  it('leaves an explicit "0" alone — that is the user saying off', () => {
+    const off = { env: { CLAUDE_CODE_ENABLE_TODO_TOOLS: '0' } };
+    expect(removeHookBlock(off)).toEqual(off);
+  });
+
+  it('no longer writes a prompt-cache TTL, and removes the one earlier setups wrote', () => {
+    expect(mergeHookBlock({}, 4823).subagentPromptCacheTtl).toBeUndefined();
+    expect(removeHookBlock({ subagentPromptCacheTtl: SUBAGENT_PROMPT_CACHE_TTL }).subagentPromptCacheTtl).toBeUndefined();
+  });
+
+  it("leaves the user's own prompt-cache TTL alone", () => {
+    const withTtl = { subagentPromptCacheTtl: '5m' };
+    expect(mergeHookBlock(withTtl, 4823).subagentPromptCacheTtl).toBe('5m');
+    expect(removeHookBlock(withTtl).subagentPromptCacheTtl).toBe('5m');
+  });
+
+  it('leaves a settings file with no console hooks untouched', () => {
+    const original = { model: 'opus', statusLine: { type: 'command', command: 'my-prompt' } };
+    expect(removeHookBlock(original)).toEqual(original);
+  });
+
+  it('writes the task gate on PreToolUse', () => {
+    const merged = mergeHookBlock({}, 4823) as { hooks: Record<string, HookEntry[]> };
+    const gate = merged.hooks.PreToolUse.find((e) => e.matcher === 'TaskCreate|TaskUpdate');
+    expect(gate?.hooks[0].command).toContain('task-gate.sh');
+    expect(merged.hooks.TaskCreated).toBeUndefined();
+    expect(merged.hooks.TaskCompleted).toBeUndefined();
+  });
+
+  it('writes the agent gate on PreToolUse and strips it again', () => {
+    const merged = mergeHookBlock({}, 4823) as { hooks: Record<string, HookEntry[]> };
+    const gates = merged.hooks.PreToolUse.filter((e) => e.hooks[0].command.includes('agent-gate.sh'));
+    expect(gates).toHaveLength(1);
+    expect(gates[0].matcher).toBe('Agent');
+    expect(JSON.stringify(removeHookBlock(merged))).not.toContain('agent-gate.sh');
+  });
+
+  it("keeps a user's own empty event key", () => {
+    const merged = mergeHookBlock({ hooks: { Elicitation: [] } }, 4823) as { hooks: Record<string, unknown[]> };
+    expect(merged.hooks.Elicitation).toEqual([]);
+  });
+
+  it('uninstall removes the task gate', () => {
+    const cleaned = removeHookBlock(mergeHookBlock({}, 4823)) as { hooks?: Record<string, HookEntry[]> };
+    expect((cleaned.hooks?.PreToolUse ?? []).filter((e) => e.matcher === 'TaskCreate|TaskUpdate')).toHaveLength(0);
+  });
+
+  it("an upgrade strips the old gate entries and keeps a user's own hook beside them", () => {
+    const old = {
+      hooks: {
+        TaskCreated: [{ hooks: [{ type: 'command', command: "'/x/plugin/bin/task-created.sh'", timeout: 5 }] }],
+        TaskCompleted: [
+          { hooks: [{ type: 'command', command: "'/x/plugin/bin/task-completed.sh'", timeout: 5 }] },
+          { hooks: [{ type: 'command', command: 'notify-slack' }] },
+        ],
+      },
+    };
+    const merged = mergeHookBlock(old, 4823) as { hooks: Record<string, HookEntry[]> };
+    expect(merged.hooks.TaskCreated).toBeUndefined();
+    expect(merged.hooks.TaskCompleted.map((e) => e.hooks[0].command)).toEqual(['notify-slack']);
+  });
+});
+
+describe('checkClaudeVersion', () => {
+  it('accepts the floor and anything newer', () => {
+    expect(PINNED_CLAUDE_VERSION).toBe('2.1.231');
+    for (const v of ['2.1.231', '2.1.283', '2.2.0']) {
+      expect(checkClaudeVersion(`${v} (Claude Code)`)).toEqual({
+        ok: true,
+        message: `claude ${v} is at or above 2.1.231`,
+      });
+    }
+  });
+
+  it('warns below the floor', () => {
+    expect(checkClaudeVersion('2.1.200 (Claude Code)')).toEqual({
+      ok: false,
+      message: 'claude 2.1.200 is older than 2.1.231; the control plane writes internal protocols and may be wrong',
+    });
+  });
+
+  it('warns when the version cannot be read', () => {
+    expect(checkClaudeVersion(null)).toEqual({
+      ok: false,
+      message: 'could not read `claude --version`; the console needs 2.1.231 or newer',
+    });
+    expect(checkClaudeVersion('command not found').ok).toBe(false);
+  });
+});
+
+describe('runSetup', () => {
+  it('prints the block and writes nothing without confirmation', async () => {
+    const settingsPath = path.join(dir, 'settings.json');
+    const output = await runSetup({ settingsPath, port: 4823, confirm: false });
+    expect(output).toContain('"type": "command"');
+    expect(output).toContain('http://127.0.0.1:4823/hook');
+    expect(output).toContain('nothing was written');
+    await expect(fs.stat(settingsPath)).rejects.toThrow();
+  });
+
+  it('writes on confirmation and restores on uninstall', async () => {
+    const settingsPath = path.join(dir, 'settings.json');
+    await fs.writeFile(settingsPath, JSON.stringify({ model: 'opus' }, null, 2));
+
+    await runSetup({ settingsPath, port: 4823, confirm: true });
+    const written = JSON.parse(await fs.readFile(settingsPath, 'utf8')) as Record<string, unknown>;
+    expect(written.model).toBe('opus');
+    expect(Object.keys(written.hooks as object)).toEqual([...HOOK_EVENTS]);
+
+    await runSetup({ settingsPath, port: 4823, confirm: true, uninstall: true });
+    expect(JSON.parse(await fs.readFile(settingsPath, 'utf8'))).toEqual({ model: 'opus' });
+  });
+
+  it("never touches a status line it does not own", async () => {
+    // The console's own status line ends in `printf ''`, so taking the key over
+    // does not replace someone's status bar, it blanks it.
+    const settingsPath = path.join(dir, 'settings.json');
+    const mine = { type: 'command', command: '~/bin/my-fancy-statusline.sh' };
+    await fs.writeFile(settingsPath, JSON.stringify({ statusLine: mine }, null, 2));
+
+    const output = await runSetup({ settingsPath, port: 4823, confirm: true });
+    const installed = JSON.parse(await fs.readFile(settingsPath, 'utf8')) as Record<string, unknown>;
+    expect(installed.statusLine).toEqual(mine);
+    expect(output).toContain('left your own status line alone');
+
+    await runSetup({ settingsPath, port: 4823, confirm: true, uninstall: true });
+    const after = JSON.parse(await fs.readFile(settingsPath, 'utf8')) as Record<string, unknown>;
+    expect(after.statusLine).toEqual(mine);
+    await expect(fs.stat(backupPathFor(settingsPath))).rejects.toThrow();
+  });
+
+  it("takes the status line only when the key is free, and hands it back", async () => {
+    const settingsPath = path.join(dir, 'settings.json');
+    await runSetup({ settingsPath, port: 4823, confirm: true });
+    await runSetup({ settingsPath, port: 4823, confirm: true, uninstall: true });
+    const after = JSON.parse(await fs.readFile(settingsPath, 'utf8')) as Record<string, unknown>;
+    expect(after.statusLine).toBeUndefined();
+    expect(after.subagentStatusLine).toBeUndefined();
+  });
+
+  it("preserves the user's own hooks across install and uninstall", async () => {
+    const settingsPath = path.join(dir, 'settings.json');
+    const guard = { hooks: [{ type: 'command', command: 'my-guard.sh' }] };
+    await fs.writeFile(settingsPath, JSON.stringify({ hooks: { PreToolUse: [guard] } }, null, 2));
+
+    await runSetup({ settingsPath, port: 4823, confirm: true });
+    const installed = JSON.parse(await fs.readFile(settingsPath, 'utf8')) as {
+      hooks: Record<string, unknown[]>;
+    };
+    expect(installed.hooks.PreToolUse[0]).toEqual(guard);
+
+    await runSetup({ settingsPath, port: 4823, confirm: true, uninstall: true });
+    const after = JSON.parse(await fs.readFile(settingsPath, 'utf8')) as {
+      hooks: Record<string, unknown[]>;
+    };
+    expect(after.hooks.PreToolUse).toEqual([guard]);
+  });
+
+  it('turns the env vars on and takes them off again on uninstall', async () => {
+    const settingsPath = path.join(dir, 'settings.json');
+    await runSetup({ settingsPath, port: 4823, confirm: true });
+    const installed = JSON.parse(await fs.readFile(settingsPath, 'utf8')) as { env: Record<string, string> };
+    for (const name of AGENT_ENV_VARS) expect(installed.env[name]).toBe('1');
+
+    await runSetup({ settingsPath, port: 4823, confirm: true, uninstall: true });
+    const after = JSON.parse(await fs.readFile(settingsPath, 'utf8')) as { env?: unknown };
+    expect(after.env).toBeUndefined();
+  });
+
+  it('restores the env values the user had before the install', async () => {
+    const settingsPath = path.join(dir, 'settings.json');
+    const mine = { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1', CLAUDE_CODE_ENABLE_TODO_TOOLS: '0', FOO: 'bar' };
+    await fs.writeFile(settingsPath, JSON.stringify({ env: mine }, null, 2));
+
+    await runSetup({ settingsPath, port: 4823, confirm: true });
+    const installed = JSON.parse(await fs.readFile(settingsPath, 'utf8')) as { env: Record<string, string> };
+    expect(installed.env.CLAUDE_CODE_ENABLE_TODO_TOOLS).toBe('1');
+
+    await runSetup({ settingsPath, port: 4823, confirm: true, uninstall: true });
+    expect(JSON.parse(await fs.readFile(settingsPath, 'utf8'))).toEqual({ env: mine });
+  });
+
+  it('writes no prompt-cache TTL and says nothing about one', async () => {
+    const settingsPath = path.join(dir, 'settings.json');
+    const output = await runSetup({ settingsPath, port: 4823, confirm: true });
+    const installed = JSON.parse(await fs.readFile(settingsPath, 'utf8')) as { subagentPromptCacheTtl?: unknown };
+    expect(installed.subagentPromptCacheTtl).toBeUndefined();
+    expect(output).not.toContain('subagentPromptCacheTtl');
+    expect(output).not.toContain('prompt-cache TTL');
+  });
+
+  it('uninstall still puts back the TTL an earlier install recorded', async () => {
+    const settingsPath = path.join(dir, 'settings.json');
+    await fs.writeFile(settingsPath, JSON.stringify({ subagentPromptCacheTtl: SUBAGENT_PROMPT_CACHE_TTL }, null, 2));
+    await fs.writeFile(backupPathFor(settingsPath), JSON.stringify({ env: {}, subagentPromptCacheTtl: '5m' }, null, 2));
+    await runSetup({ settingsPath, port: 4823, confirm: true, uninstall: true });
+    expect(JSON.parse(await fs.readFile(settingsPath, 'utf8')).subagentPromptCacheTtl).toBe('5m');
+  });
+
+  it('warns when the model-force flag is set in settings env, and not otherwise', async () => {
+    const settingsPath = path.join(dir, 'settings.json');
+    const clean = await runSetup({ settingsPath, port: 4823, confirm: false });
+    expect(clean).not.toContain(MODEL_FORCE_WARNING);
+
+    const forcedPath = path.join(dir, 'forced.json');
+    await fs.writeFile(
+      forcedPath,
+      JSON.stringify({ env: { CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1' } }, null, 2),
+    );
+    const forced = await runSetup({ settingsPath: forcedPath, port: 4823, confirm: false });
+    expect(forced).toContain(MODEL_FORCE_WARNING);
+  });
+
+  it('warns when the model-force flag is set in the process env', async () => {
+    const settingsPath = path.join(dir, 'settings.json');
+    const prior = process.env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE;
+    process.env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE = '1';
+    try {
+      const output = await runSetup({ settingsPath, port: 4823, confirm: false });
+      expect(output).toContain(MODEL_FORCE_WARNING);
+    } finally {
+      if (prior === undefined) delete process.env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE;
+      else process.env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE = prior;
+    }
+  });
+
+  it('does not re-stash on a second install', async () => {
+    // Otherwise the console records its own "1" as if it were the user's.
+    const settingsPath = path.join(dir, 'settings.json');
+    await runSetup({ settingsPath, port: 4823, confirm: true });
+    await runSetup({ settingsPath, port: 4823, confirm: true });
+    await runSetup({ settingsPath, port: 4823, confirm: true, uninstall: true });
+    const after = JSON.parse(await fs.readFile(settingsPath, 'utf8')) as { env?: unknown };
+    expect(after.env).toBeUndefined();
+  });
+
+  it('creates a settings file that does not exist yet', async () => {
+    const settingsPath = path.join(dir, 'nested', 'settings.json');
+    await runSetup({ settingsPath, port: 4400, confirm: true });
+    const written = JSON.parse(await fs.readFile(settingsPath, 'utf8')) as { hooks: Record<string, HookEntry[]> };
+    expect(written.hooks.PreToolUse[0].hooks[0].command).toContain('http://127.0.0.1:4400/hook');
+  });
+});
+
+describe('the workflow launcher', () => {
+  // A workflow is a different TOOL, so the Agent matcher never sees one. The
+  // spike found the launcher's `tool_input.name` gate was not merely failing
+  // for workflow fan-outs — it was never reached at all.
+  it('is registered against the Workflow tool on both arms', () => {
+    const block = hookBlock(4823);
+    for (const event of ['PreToolUse', 'PostToolUse'] as const) {
+      const entry = (block.hooks[event] as unknown as HookEntry[]).find(
+        (e) => e.matcher === 'Workflow',
+      );
+      expect(entry, `${event} has no Workflow matcher`).toBeDefined();
+      expect((entry!.hooks[0] as unknown as { command: string }).command).toContain(
+        'console-launch.sh',
+      );
+    }
+  });
+
+});

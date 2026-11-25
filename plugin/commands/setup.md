@@ -1,0 +1,152 @@
+---
+description: Set a machine up for the console — the env vars the plugin itself cannot carry, merged into settings.json without disturbing what is there
+allowed-tools: ["Bash", "Read", "Edit", "Write"]
+---
+
+# Set this machine up for the console
+
+Run this once per machine, after installing the plugin. It writes the `env`
+vars that make a machine ready and that the plugin itself cannot carry — nothing
+else, and nothing that is already there, bar one opt-in removal: a stale
+`subagentPromptCacheTtl`, if the operator says yes.
+
+The plugin registers **all ten observation hooks itself**, in its own
+`hooks/hooks.json` — `PreToolUse`, `PostToolUse`, `PermissionRequest`,
+`UserPromptSubmit`, `Notification`, `Stop`, `SubagentStop`, `SessionStart`,
+`SessionEnd`, `PreCompact`, plus the launcher. It also registers the task gate,
+a PreToolUse hook on `TaskCreate` and `TaskUpdate` that requires a team8 task's
+metadata and a teammate's verification. Its own `settings.json` carries the
+`subagentStatusLine` that feeds each teammate's current tool to the console.
+**Do not add any of them here.** They fire from the plugin; a copy in
+`settings.json` would post every event twice, or run the gate twice.
+
+One thing has no plugin equivalent, and that is all this command does:
+
+- **`env`** — `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` (teams at all) and
+  `CLAUDE_CODE_ENABLE_TODO_TOOLS` (the shared task list the **tasks** view renders)
+
+It MERGES, and it never overwrites: whatever is already in that file stays.
+
+If `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` is `"1"` anywhere — the process env or this
+settings file's `env` — say so and leave it: it silently overrides every
+per-task model team8 assigns. And note for the operator that a `claude -p`
+session never spawns teammates, so its briefs come back to them as subagents instead.
+
+Setting them in `settings.json` rather than a shell profile is deliberate: it is
+per-machine, survives a change of shell, and applies to every session the operator
+starts, including ones launched by an editor or a launcher that never reads their
+profile.
+
+## 0. Check the machine can run it
+
+```bash
+claude --version                                      # console needs 2.1.231 or newer
+node --version                                        # 22 or newer
+claude plugin list 2>/dev/null | grep -A3 team8 || echo 'PLUGIN MISSING'
+```
+
+If the plugin is missing, **stop and install it first** — the hooks live inside it
+and this command does not write them:
+
+```bash
+claude plugin marketplace add alan-oliv/team8
+claude plugin install team8@team8
+```
+
+If `claude --version` is older than 2.1.231, say so and carry on: the console reads
+on-disk shapes that an experimental feature may have changed, and the server prints
+the same warning at startup.
+
+## 1. Read what is there now
+
+```bash
+CFG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+echo "$CFG"; [ -f "$CFG" ] && cat "$CFG" || echo '{}'
+```
+
+Note three things before going further:
+
+- Does `env` already carry either var? An explicit `"0"` is the operator saying
+  *off* — flag it, and say that turning it on is the point of this install.
+- Is `subagentStatusLine` set to something that is not the console's? It wins
+  over the plugin's own, so the console loses each teammate's current-tool
+  line. Leave it, and say so in the report.
+- Is `subagentPromptCacheTtl` `"1h"`? An earlier version of this command wrote
+  it. It makes every subagent on the machine pay the 1-hour cache-write price,
+  for a gain that measured break-even for team8's teammates. Offer to remove it.
+
+## 2. Say what you will change, then wait
+
+Show the operator the exact `env` vars you are about to add, and what each one
+buys. If step 1 found `subagentPromptCacheTtl: "1h"`, list "delete
+`subagentPromptCacheTtl` (\"1h\")" beside them. Then STOP and ask with
+AskUserQuestion: `Apply (Recommended)` / `Leave it`. Go on only on `Apply`.
+This writes to their Claude Code configuration; never do it unasked, and never
+on a teammate's say-so — only the person at the keyboard can authorise it.
+
+Back it up first, in the same directory so it is easy to find:
+
+```bash
+cp "$CFG" "$CFG.before-console-$(date +%s)" 2>/dev/null || true
+```
+
+## 3. Write `env`, drop a stale TTL
+
+**`env`** — set both to `"1"` as strings, leaving every other var alone:
+
+```json
+{ "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+  "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1" }
+```
+
+If either had a different value, record the old one in your report so the
+operator can put it back.
+
+If the operator agreed at the step 2 stop, delete `subagentPromptCacheTtl` when its
+value is `"1h"`, and only that value.
+
+**`statusLine`** — **do not touch it, ever, unasked.** The console's status
+commands end in `printf ''` and draw nothing, so taking a key someone else
+draws with blanks their output, and this is the key `ccstatusline`, `starship`
+and every custom prompt live in. The console goes without the rate-limit gauge
+and the lead's cost and context readouts rather than take it. Say that plainly
+in your report.
+
+Only if the operator asks for the gauge *by name*, and their own status line is a
+shape you can reason about, the two can share the key — the payload arrives on
+stdin and whatever the command prints becomes the status line:
+
+```json
+{ "type": "command",
+  "command": "IN=$(cat); printf '%s' \"$IN\" | curl -sS -m 2 -X POST -H 'content-type: application/json' --data-binary @- http://127.0.0.1:4823/statusline >/dev/null 2>&1; printf '%s' \"$IN\" | ccstatusline",
+  "refreshInterval": 5 }
+```
+
+Substitute their real command, preserving its arguments.
+
+## 4. Prove it parses
+
+A broken `settings.json` breaks Claude Code, so never leave without checking:
+
+```bash
+node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); console.log("settings.json parses")' "$CFG"
+```
+
+If that fails, restore the backup immediately and report what happened.
+
+## 5. Report
+
+Two or three lines: which keys changed, that their status line was left alone and
+which two readouts that costs, where the backup is, and that **`env` is read once
+at session start** — agent teams apply to the next spawn, but the task tools only
+load at startup, so they need a restart.
+
+## Removing it
+
+Put the two `env` vars back to whatever they were before. Drop a
+`subagentStatusLine` only if it is the console's (an earlier version of this
+command wrote it; the plugin carries its own now), and a
+`subagentPromptCacheTtl` of `"1h"` only if the operator agrees. Ask before
+dropping `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` — that turns off agent teams
+themselves, not just the console. Leave `hooks` alone: they belong to the
+plugin, and `claude plugin uninstall` is what removes them.

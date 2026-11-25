@@ -1,0 +1,436 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { LAUNCH_SCRIPT, RESTART_SCRIPT, HINT_SCRIPT, PLUGIN_DIR } from './lifecycle';
+import { atomicWrite } from './control/mailbox';
+import { DEFAULT_PERMISSION_TIMEOUT_MS } from './ingest/hooks';
+import { readJsonSafe } from './watch/jsonfile';
+import { isOlderBuild } from './build-info';
+
+const run = promisify(execFile);
+
+export const PINNED_CLAUDE_VERSION = '2.1.231';
+// Claude Code reads hook timeouts in SECONDS, for both `command` and `http`
+// hooks — verified against 2.1.231 by timing a hook that outlives its own
+// timeout. Writing milliseconds here does not tighten the bound, it multiplies
+// it by a thousand: a console that hangs would hold the turn for 83 minutes.
+export const HOOK_TIMEOUT_SECONDS = 5;
+/** The hook's timeout has to cover the hold window the handler actually uses. */
+export const PERMISSION_HOOK_TIMEOUT_SECONDS = DEFAULT_PERMISSION_TIMEOUT_MS / 1000;
+export const LAUNCH_HOOK_TIMEOUT_SECONDS = 5;
+/** Absolute path to the task gate, used by hookBlock(). */
+export const TASK_GATE_SCRIPT = path.join(PLUGIN_DIR, 'bin', 'task-gate.sh');
+/** Absolute path to the agent gate, used by hookBlock(). */
+export const AGENT_GATE_SCRIPT = path.join(PLUGIN_DIR, 'bin', 'agent-gate.sh');
+/** The bundled inbox-delivery hook, used by hookBlock(); matches plugin/hooks/hooks.json. */
+export const INBOX_DELIVER_SCRIPT = path.join(PLUGIN_DIR, 'dist', 'hooks', 'inbox-deliver.js');
+/** Where the user's own env values are stashed while the console owns them. */
+export const BACKUP_FILE = 'team8.backup.json';
+// Earlier setups wrote this teammate prompt-cache TTL. The key is global, so
+// every subagent on the machine paid the 1-hour write price, and over 262
+// team8 teammates the warm re-reads it bought only broke even. Setup no longer
+// writes it; uninstall still removes it.
+export const SUBAGENT_PROMPT_CACHE_TTL = '1h';
+export const MODEL_FORCE_WARNING =
+  'CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 overrides every per-task model team8 assigns';
+
+// Agent teams are what this console exists to show, and the task tools are the
+// shared task list it renders. Neither can be turned on from a plugin manifest,
+// so the setup that installs the hooks turns them on too.
+export const AGENT_ENV_VARS = [
+  'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS',
+  'CLAUDE_CODE_ENABLE_TODO_TOOLS',
+] as const;
+type EnvVar = (typeof AGENT_ENV_VARS)[number];
+
+export const HOOK_EVENTS = [
+  'PreToolUse',
+  'PostToolUse',
+  'PermissionRequest',
+  'UserPromptSubmit',
+  'Notification',
+  'Stop',
+  'SubagentStop',
+  'SessionStart',
+  'SessionEnd',
+  'PreCompact',
+] as const;
+
+const MATCHER_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PermissionRequest']);
+// Anchored form for the old `http`-type entries this version no longer
+// writes but still has to recognise and strip on upgrade; loose form for the
+// curl one-liner `observe()` now embeds inside a `command` entry.
+const CONSOLE_HOOK_URL = /^http:\/\/127\.0\.0\.1:\d+\/hook$/;
+const CONSOLE_HOOK_COMMAND_URL = /http:\/\/127\.0\.0\.1:\d+\/hook\b/;
+
+export interface HttpHook {
+  type: 'http';
+  url: string;
+  timeout: number;
+}
+export interface CommandHook {
+  type: 'command';
+  command: string;
+  timeout: number;
+}
+export interface HookEntry {
+  matcher?: string;
+  hooks: Array<HttpHook | CommandHook>;
+}
+export interface StatusLineCommand {
+  type: 'command';
+  command: string;
+  refreshInterval?: number;
+}
+export interface HookBlock {
+  hooks: Record<string, HookEntry[]>;
+  statusLine: StatusLineCommand;
+  subagentStatusLine: StatusLineCommand;
+  env: Record<string, string>;
+}
+
+function post(port: number, route: string): string {
+  return `curl -sS -m 2 -X POST -H 'content-type: application/json' --data-binary @- http://127.0.0.1:${port}/${route} >/dev/null 2>&1; printf ''`;
+}
+
+// An `http` hook has no setting to stay quiet when nothing answers: Claude
+// Code always renders a connection refusal as a "<hook name> hook error"
+// notice, once per hook, on every single tool call while the console is
+// down. A `command` hook that exits 0 doesn't — stderr from an exit-0 hook
+// goes to the debug log only — so observation events POST through curl
+// instead of through Claude Code's own http hook client, and `exit 0` forces
+// success regardless of whether the POST landed. curl's stdout still carries
+// the console's JSON response through when it did.
+//
+// Staying quiet only hides the symptom: every event while the console is down
+// is an event the wall never gets. So a failed POST also hands off to the
+// restarter, which decides whether there is anything worth restarting for. It
+// runs on ANY curl failure, not just a refused connection, because the branch
+// has no access to curl's exit code without a second statement — the script
+// re-checks /health itself and exits when the console is merely slow.
+function observe(port: number, timeoutSeconds: number): string {
+  return `curl -sS -m ${timeoutSeconds} -X POST -H 'content-type: application/json' --data-binary @- http://127.0.0.1:${port}/hook 2>/dev/null || OCTO_PORT=${port} '${RESTART_SCRIPT}'; exit 0`;
+}
+
+// Same sh pre-filter as plugin/hooks/hooks.json. Hooks are user-scope, so this
+// runs after every tool call on the machine, and it starts node for teammates
+// only: a teammate's agent_id is name@team on older builds and
+// a<name>-<16 hex> on 2.1.296, a plain subagent's or workflow agent's is "a"
+// plus hex, and the lead's hook has none, so the last cut stops at the
+// payload's first quote and leaves "{". Claude Code writes the payload with a
+// bare JSON.stringify (no space after a colon), its own fields ahead of
+// tool_input, so agent_id is only looked for there: a prefix strip over a whole
+// lead payload, with no agent_id to stop at, is quadratic in sh and takes
+// seconds on a large tool response.
+function inboxDeliverCommand(scriptPath: string): string {
+  return `input=$(cat); id=\${input%%'"tool_input":'*}; id=\${id#*'"agent_id":"'}; id=\${id%%'"'*}; case "$id" in *@*|*-*) printf '%s' "$input" | node '${scriptPath}' 2>/dev/null;; esac; exit 0`;
+}
+
+export function hookBlock(port: number): HookBlock {
+  const hooks: Record<string, HookEntry[]> = {};
+  for (const event of HOOK_EVENTS) {
+    // PermissionRequest is deliberately held for the operator; every other
+    // event must not be able to stall the agent's turn.
+    const timeout =
+      event === 'PermissionRequest' ? PERMISSION_HOOK_TIMEOUT_SECONDS : HOOK_TIMEOUT_SECONDS;
+    const command = observe(port, timeout);
+    const entry: HookEntry = {
+      hooks: [{ type: 'command', command, timeout }],
+    };
+    if (MATCHER_EVENTS.has(event)) entry.matcher = '*';
+    hooks[event] = [entry];
+  }
+
+  // The launcher runs on EVERY Agent spawn and exits immediately unless a real
+  // team exists, so its cost on the common path is one shell process.
+  // Never SubagentStart: that runs in the spawned agent's context, where
+  // systemMessage is filtered out of the hook result and the link never
+  // reaches the operator.
+  //
+  // Both arms, matching hooks/hooks.json — the plugin install and this manual
+  // one must announce at the same moment. PreToolUse is the fast path: it
+  // fires BEFORE the teammate spawns, so the operator has the link while the
+  // team is still coming up. PostToolUse is the safety net, gated on the
+  // member count that only exists once the spawn returned. The launcher's
+  // once-per-team marker file makes sure only one of the two announces.
+  const launcher: HookEntry = {
+    matcher: 'Agent',
+    hooks: [
+      {
+        type: 'command',
+        // The launcher defaults OCTO_PORT to 4823, so `setup --port 5000`
+        // used to write hooks pointing at 5000 while the launcher started
+        // the server on 4823. Carry the port across the language boundary.
+        command: `OCTO_PORT=${port} '${LAUNCH_SCRIPT}'`,
+        timeout: LAUNCH_HOOK_TIMEOUT_SECONDS,
+      },
+    ],
+  };
+  // A dynamic workflow is a DIFFERENT tool, so the Agent matcher above never
+  // sees one and the launcher's name gate is never reached. A run creates no
+  // team either, which is why it needs its own matcher rather than a looser
+  // one: the launcher points the console at the session instead.
+  const workflowLauncher: HookEntry = { ...launcher, matcher: 'Workflow' };
+  // The task gate reads only the call's input, so it runs on the tool call
+  // itself; on TaskCreated/TaskCompleted it had to find the task's file and
+  // could read the wrong list. Matches hooks/hooks.json, after the launchers.
+  const taskGate: HookEntry = {
+    matcher: 'TaskCreate|TaskUpdate',
+    hooks: [{ type: 'command', command: `'${TASK_GATE_SCRIPT}'`, timeout: HOOK_TIMEOUT_SECONDS }],
+  };
+  // The agent gate keeps the isolation flag consistent across a session's
+  // named team8 spawns, so a reviewer in a subagents run cannot slip into the
+  // roster as a teammate. Matches hooks/hooks.json, after the task gate.
+  const agentGate: HookEntry = {
+    matcher: 'Agent',
+    hooks: [{ type: 'command', command: `'${AGENT_GATE_SCRIPT}'`, timeout: HOOK_TIMEOUT_SECONDS }],
+  };
+  hooks.PreToolUse = [...(hooks.PreToolUse ?? []), launcher, workflowLauncher, taskGate, agentGate];
+  // Hands a busy teammate its unread messages after its next tool call; the
+  // lead's hooks carry no agent_id and never start it. Matches
+  // plugin/hooks/hooks.json, right after the observation curl entry.
+  const inboxDeliver: HookEntry = {
+    hooks: [{ type: 'command', command: inboxDeliverCommand(INBOX_DELIVER_SCRIPT), timeout: HOOK_TIMEOUT_SECONDS }],
+    matcher: '*',
+  };
+  hooks.PostToolUse = [...(hooks.PostToolUse ?? []), inboxDeliver, { ...launcher }, { ...workflowLauncher }];
+
+  // Upgrades an older console and, after a resume, tells a lead its teammates
+  // are gone. Appended to the same entry as the observation curl, matching
+  // hooks/hooks.json, and never starts a console that is not running.
+  hooks.SessionStart[0].hooks.push({
+    type: 'command',
+    command: `'${HINT_SCRIPT}'`,
+    timeout: LAUNCH_HOOK_TIMEOUT_SECONDS,
+  });
+
+  return {
+    hooks,
+    statusLine: { type: 'command', command: post(port, 'statusline'), refreshInterval: 5 },
+    subagentStatusLine: { type: 'command', command: post(port, 'substatus') },
+    env: Object.fromEntries(AGENT_ENV_VARS.map((name) => [name, '1'])),
+  };
+}
+
+function isConsoleEntry(entry: unknown): boolean {
+  const hooks = (entry as HookEntry | undefined)?.hooks;
+  if (!Array.isArray(hooks)) return false;
+  return hooks.some(
+    (h) =>
+      (h?.type === 'http' && typeof h.url === 'string' && CONSOLE_HOOK_URL.test(h.url)) ||
+      (h?.type === 'command' &&
+        typeof h.command === 'string' &&
+        (h.command.includes('console-launch.sh') ||
+          h.command.includes('task-gate.sh') ||
+          h.command.includes('agent-gate.sh') ||
+          // The two gates earlier versions wrote, so an upgrade strips them.
+          h.command.includes('task-created.sh') ||
+          h.command.includes('task-completed.sh') ||
+          h.command.includes('inbox-deliver.js') ||
+          CONSOLE_HOOK_COMMAND_URL.test(h.command))),
+  );
+}
+
+function isConsoleStatusLine(value: unknown, route: string): boolean {
+  const command = (value as StatusLineCommand | undefined)?.command;
+  return typeof command === 'string' && command.includes(`127.0.0.1:`) && command.includes(`/${route}`);
+}
+
+export function mergeHookBlock(
+  settings: Record<string, unknown>,
+  port: number,
+): Record<string, unknown> {
+  const block = hookBlock(port);
+  const existing = (settings.hooks ?? {}) as Record<string, unknown[]>;
+  const hooks: Record<string, unknown[]> = {};
+  for (const [event, entries] of Object.entries(existing)) {
+    const kept = (Array.isArray(entries) ? entries : []).filter((e) => !isConsoleEntry(e));
+    // The old TaskCreated and TaskCompleted gates go once nothing of the
+    // user's is left on them; every other event keeps its key as before.
+    if (kept.length > 0 || !['TaskCreated', 'TaskCompleted'].includes(event)) hooks[event] = kept;
+  }
+  for (const event of HOOK_EVENTS) {
+    hooks[event] = [...(hooks[event] ?? []), ...block.hooks[event]];
+  }
+  return {
+    ...settings,
+    hooks,
+    statusLine: keptStatusLine(settings.statusLine, block.statusLine, 'statusline'),
+    subagentStatusLine: keptStatusLine(settings.subagentStatusLine, block.subagentStatusLine, 'substatus'),
+    env: { ...((settings.env ?? {}) as Record<string, unknown>), ...block.env },
+  };
+}
+
+/**
+ * A status line the console installs ends in `printf ''` — it draws nothing,
+ * because its only job is to POST the payload. So writing it over someone's
+ * `ccstatusline` does not replace their status bar, it blanks it. The console
+ * takes the key only when it is free, and gives up the readouts it feeds
+ * otherwise; ours is still replaced, so a re-run can move the port.
+ */
+function keptStatusLine(existing: unknown, ours: StatusLineCommand, route: string): unknown {
+  if (existing === undefined || isConsoleStatusLine(existing, route)) return ours;
+  return existing;
+}
+
+export function removeHookBlock(settings: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...settings };
+  const existing = settings.hooks as Record<string, unknown[]> | undefined;
+  if (existing) {
+    const hooks: Record<string, unknown[]> = {};
+    for (const [event, entries] of Object.entries(existing)) {
+      const kept = (Array.isArray(entries) ? entries : []).filter((e) => !isConsoleEntry(e));
+      if (kept.length > 0) hooks[event] = kept;
+    }
+    if (Object.keys(hooks).length > 0) out.hooks = hooks;
+    else delete out.hooks;
+  }
+  if (isConsoleStatusLine(out.statusLine, 'statusline')) delete out.statusLine;
+  if (isConsoleStatusLine(out.subagentStatusLine, 'substatus')) delete out.subagentStatusLine;
+  // Same limitation as the env "1" check below: indistinguishable from a user
+  // who happened to choose the same value themselves. runSetup's backup file
+  // is what makes that case correct in practice.
+  if (out.subagentPromptCacheTtl === SUBAGENT_PROMPT_CACHE_TTL) delete out.subagentPromptCacheTtl;
+  const env = settings.env as Record<string, unknown> | undefined;
+  if (env) {
+    // Only "1" is ours to drop. An explicit "0" is the user saying *off*, which
+    // a bare `uninstall` — with no backup to restore from — must not undo.
+    const kept = Object.fromEntries(
+      Object.entries(env).filter(([key, value]) => !(AGENT_ENV_VARS.includes(key as EnvVar) && value === '1')),
+    );
+    if (Object.keys(kept).length > 0) out.env = kept;
+    else delete out.env;
+  }
+  return out;
+}
+
+export function checkClaudeVersion(raw: string | null): { ok: boolean; message: string } {
+  const version = raw ? /(\d+\.\d+\.\d+)/.exec(raw)?.[1] : undefined;
+  if (!version) {
+    return {
+      ok: false,
+      message: `could not read \`claude --version\`; the console needs ${PINNED_CLAUDE_VERSION} or newer`,
+    };
+  }
+  if (!isOlderBuild(version, PINNED_CLAUDE_VERSION)) {
+    return { ok: true, message: `claude ${version} is at or above ${PINNED_CLAUDE_VERSION}` };
+  }
+  return {
+    ok: false,
+    message: `claude ${version} is older than ${PINNED_CLAUDE_VERSION}; the control plane writes internal protocols and may be wrong`,
+  };
+}
+
+export async function readClaudeVersion(): Promise<string | null> {
+  try {
+    const { stdout } = await run('claude', ['--version'], { timeout: 5000 });
+    return stdout.trim();
+  } catch {
+    return null;
+  }
+}
+
+interface SettingsBackup {
+  env: Record<string, string | null>;
+  /** Only in backups an earlier install wrote. */
+  subagentPromptCacheTtl?: string | null;
+}
+
+function envBackup(settings: Record<string, unknown>): Record<string, string | null> {
+  const env = (settings.env ?? {}) as Record<string, unknown>;
+  return Object.fromEntries(
+    AGENT_ENV_VARS.map((name) => [name, typeof env[name] === 'string' ? (env[name] as string) : null]),
+  );
+}
+
+export function backupPathFor(settingsPath: string): string {
+  return path.join(path.dirname(settingsPath), BACKUP_FILE);
+}
+
+export async function runSetup(opts: {
+  settingsPath: string;
+  port: number;
+  confirm: boolean;
+  uninstall?: boolean;
+}): Promise<string> {
+  const block = hookBlock(opts.port);
+  const lines: string[] = [];
+
+  if (!opts.uninstall) {
+    lines.push(`This block goes into ${opts.settingsPath}:`, '', JSON.stringify(block, null, 2), '');
+  } else {
+    lines.push(
+      `This removes the console's hooks and its own status lines from ${opts.settingsPath},`,
+      `and puts ${AGENT_ENV_VARS.join(' and ')} back the way you had them.`,
+      '',
+    );
+  }
+
+  let current: Record<string, unknown> = {};
+  try {
+    current = JSON.parse(await fs.readFile(opts.settingsPath, 'utf8')) as Record<string, unknown>;
+  } catch {
+    current = {};
+  }
+
+  // Warn, never change it: CLAUDE_CODE_SUBAGENT_MODEL_FORCE silently makes
+  // Claude Code ignore the model named in the spawn prompt, which defeats
+  // team8's per-task model choice. Checked in both places it could be set.
+  const settingsEnv = current.env as Record<string, unknown> | undefined;
+  if (process.env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE === '1' || settingsEnv?.CLAUDE_CODE_SUBAGENT_MODEL_FORCE === '1') {
+    lines.push(MODEL_FORCE_WARNING, '');
+  }
+
+  if (!opts.confirm) {
+    lines.push('nothing was written — re-run with --yes to apply.');
+    return lines.join('\n');
+  }
+
+  const next = opts.uninstall ? removeHookBlock(current) : mergeHookBlock(current, opts.port);
+  await fs.mkdir(path.dirname(opts.settingsPath), { recursive: true });
+
+  // The env vars are the only keys the console overwrites, so they are the only
+  // ones it has to remember: status lines it does not own are left in place.
+  const backupPath = backupPathFor(opts.settingsPath);
+  const saved = await readJsonSafe<SettingsBackup>(backupPath);
+  if (opts.uninstall) {
+    if (saved?.env) {
+      const env = { ...((next.env ?? {}) as Record<string, string>) };
+      for (const [name, value] of Object.entries(saved.env)) {
+        if (typeof value === 'string') env[name] = value;
+      }
+      if (Object.keys(env).length > 0) next.env = env;
+      else delete next.env;
+      lines.push(`put ${AGENT_ENV_VARS.join(' and ')} back the way you had them.`);
+    }
+    if (typeof saved?.subagentPromptCacheTtl === 'string') {
+      next.subagentPromptCacheTtl = saved.subagentPromptCacheTtl;
+      lines.push('put your prompt-cache TTL back the way you had it.');
+    }
+    await fs.rm(backupPath, { force: true });
+  } else {
+    // Stash once: a second install would otherwise record the console's own
+    // "1" as if it were the user's.
+    if (saved === null) {
+      await atomicWrite(
+        backupPath,
+        `${JSON.stringify(
+          { env: envBackup(current) },
+          null,
+          2,
+        )}\n`,
+      );
+    }
+    if (current.statusLine && !isConsoleStatusLine(current.statusLine, 'statusline')) {
+      lines.push('left your own status line alone — no rate-limit gauge or lead cost readout.');
+    }
+    lines.push(`${AGENT_ENV_VARS.join(' and ')} are on — restart Claude Code for the task tools to load.`);
+  }
+
+  // settings.json is the most important config file on the machine and Claude
+  // Code may be reading it; a rename is the only write that cannot tear it.
+  await atomicWrite(opts.settingsPath, `${JSON.stringify(next, null, 2)}\n`);
+  lines.push(opts.uninstall ? 'removed.' : 'written.');
+  return lines.join('\n');
+}

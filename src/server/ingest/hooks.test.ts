@@ -1,0 +1,827 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { openStore, type Store, type StoredEvent } from '../store';
+import type { HeldPermit, Permits } from '../control/permits';
+import { agentNameFrom, createHookHandlers, PROGRESS_STALL_MS, stalledTask, type HookHandlers } from './hooks';
+import type { HookPayload, StatuslinePayload, SubstatusPayload, TaskPayload } from '../project';
+import type { NeedsYouItem } from '../../shared/domain';
+
+// permits.ts (Task 14) declares only the Permits port type; createPermits is
+// added in Task 15. This fake gives the real async hold/resolve semantics the
+// 'holds PermissionRequest' test needs, without depending on Task 15's work.
+function stubPermits(): Permits & { held: HeldPermit[] } {
+  const held: HeldPermit[] = [];
+  type Settled = { decision: 'allow' | 'deny' | 'withdrawn'; reason?: string; updatedInput?: Record<string, unknown> };
+  const settlers = new Map<string, (d: Settled) => void>();
+  return {
+    held,
+    hold(agent, toolName, input, timeoutMs, foreign) {
+      const id = `permit-${held.length + 1}`;
+      held.push({
+        id, agent, toolName, input, expiresAt: Date.now() + timeoutMs,
+        ...(foreign ? { session: foreign.session, card: { ...foreign.card, id } } : {}),
+      });
+      const promise = new Promise<Settled>((settle) => {
+        settlers.set(id, settle);
+      });
+      return { id, promise };
+    },
+    resolve(id, decision, reason, updatedInput) {
+      const idx = held.findIndex((p) => p.id === id);
+      if (idx === -1) return false;
+      held.splice(idx, 1);
+      settlers.get(id)?.({ decision, reason, updatedInput });
+      settlers.delete(id);
+      return true;
+    },
+    withdraw(id) {
+      const idx = held.findIndex((p) => p.id === id);
+      if (idx === -1) return false;
+      held.splice(idx, 1);
+      settlers.get(id)?.({ decision: 'withdrawn' });
+      settlers.delete(id);
+      return true;
+    },
+    list: () => held,
+  };
+}
+
+let dir: string;
+let store: Store;
+let permits: Permits;
+let handlers: HookHandlers;
+
+beforeEach(async () => {
+  dir = await fs.mkdtemp(path.join(os.tmpdir(), 'hooks-'));
+  store = openStore(path.join(dir, 'events.db'));
+  permits = stubPermits();
+  handlers = createHookHandlers({ store, permits });
+});
+
+afterEach(async () => {
+  store.close();
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+const of = (events: StoredEvent[], kind: string) => events.filter((e) => e.kind === kind);
+
+describe('substatus scope rule: teammates only', () => {
+  it('stores in_process_teammate rows and ignores every other subagent row', async () => {
+    const store = openStore(path.join(dir, 'substatus.db'));
+    const handlers = createHookHandlers({ store, permits: stubPermits() });
+
+    await handlers.substatus({
+      session_id: '98b0b4a7-3206-455b-aaf6-a5a81ad1e283',
+      tasks: [
+        { agentId: 'probe-alpha', name: 'probe-alpha', type: 'in_process_teammate',
+          tokenCount: 34469, contextWindowSize: 1000000, status: 'active', model: 'claude-opus-5' },
+        { agentId: 'a9f20a3464bfe2362', name: 'searcher', type: 'task',
+          tokenCount: 91000, contextWindowSize: 1000000, status: 'active', model: 'claude-opus-5' },
+        { agentId: 'a3eeaa94f896ac303', name: 'plan-author', type: 'workflow',
+          tokenCount: 120000, contextWindowSize: 1000000, status: 'active', model: 'claude-opus-5' },
+      ],
+    });
+
+    const rows = store.replay().filter((e) => e.kind === 'substatus');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].agent).toBe('probe-alpha');
+    expect((rows[0].payload as { tokenCount: number }).tokenCount).toBe(34469);
+    store.close();
+  });
+});
+
+describe('agentNameFrom', () => {
+  it('strips the a-prefix and 16-hex suffix of a subagent id', () => {
+    expect(agentNameFrom('aprobe-alpha-84fd551b27de6433')).toBe('probe-alpha');
+    expect(agentNameFrom('aprobe-charlie-12ee4cb1ed35cf7c')).toBe('probe-charlie');
+  });
+
+  it('takes the bare name from an agentId', () => {
+    expect(agentNameFrom('probe-bravo@session-98b0b4a7')).toBe('probe-bravo');
+  });
+
+  it('falls back to the lead name', () => {
+    expect(agentNameFrom(undefined)).toBe('team-lead');
+    expect(agentNameFrom(null, 'lead')).toBe('lead');
+  });
+});
+
+describe('hook', () => {
+  it('answers a non-permission hook immediately and attributes the agent', async () => {
+    const res = await handlers.hook({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: 'sleep 10' },
+      agent_id: 'aprobe-alpha-84fd551b27de6433',
+      agent_type: 'general-purpose',
+    });
+    expect(res).toEqual({ status: 200, body: {} });
+
+    const events = of(store.replay(), 'hook');
+    expect(events).toHaveLength(1);
+    expect(events[0].agent).toBe('probe-alpha');
+    expect(events[0].payload).toMatchObject({ event: 'PreToolUse', agent: 'probe-alpha', toolName: 'Bash' });
+  });
+
+  it('never throws on a malformed body', async () => {
+    expect(await handlers.hook(null)).toEqual({ status: 200, body: {} });
+    expect(await handlers.hook('nonsense')).toEqual({ status: 200, body: {} });
+    expect(await handlers.hook({ hook_event_name: 42 })).toEqual({ status: 200, body: {} });
+  });
+
+  it('captures MessageDisplay text and UserPromptSubmit prompts', async () => {
+    await handlers.hook({ hook_event_name: 'Notification', message: 'Claude needs your permission' });
+    await handlers.hook({ hook_event_name: 'UserPromptSubmit', prompt: 'spawn three probes' });
+    const events = of(store.replay(), 'hook').map((e) => e.payload as HookPayload);
+    expect(events[0].text).toBe('Claude needs your permission');
+    expect(events[1].text).toBe('spawn three probes');
+  });
+
+  it('holds PermissionRequest until the operator decides', async () => {
+    const pending = handlers.hook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Bash',
+      tool_input: { command: 'rm -rf migrations/legacy' },
+      agent_id: 'aprobe-bravo-babf58016882bc72',
+      timeout: 10000,
+    });
+
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(settled).toBe(false);
+
+    const card = of(store.replay(), 'needsyou').at(-1)!.payload as NeedsYouItem;
+    expect(card.kind).toBe('permission');
+    expect(card.agent).toBe('probe-bravo');
+    expect(card.detail).toContain('Bash');
+    expect(permits.list().map((p) => p.id)).toEqual([card.id]);
+
+    expect(permits.resolve(card.id, 'allow')).toBe(true);
+    const resolved = await pending;
+    expect(resolved).toEqual({
+      status: 200,
+      body: {
+        hookSpecificOutput: {
+          hookEventName: 'PermissionRequest',
+          decision: { behavior: 'allow' },
+        },
+      },
+    });
+    expect(resolved.body).not.toHaveProperty('hookSpecificOutput.permissionDecision');
+    expect((of(store.replay(), 'needsyou-resolved').at(-1)!.payload as { id: string }).id).toBe(card.id);
+  });
+
+  it('withdraws a held PermissionRequest when its hook request goes away, answering with no decision', async () => {
+    const gone = new AbortController();
+    const pending = handlers.hook(
+      {
+        hook_event_name: 'PermissionRequest',
+        tool_name: 'AskUserQuestion',
+        tool_input: { questions: [] },
+        agent_id: 'aprobe-bravo-babf58016882bc72',
+        timeout: 10000,
+      },
+      gone.signal,
+    );
+    const card = of(store.replay(), 'needsyou').at(-1)!.payload as NeedsYouItem;
+
+    gone.abort();
+
+    expect(await pending).toEqual({ status: 200, body: {} });
+    expect(permits.list()).toEqual([]);
+    expect((of(store.replay(), 'needsyou-resolved').at(-1)!.payload as { id: string }).id).toBe(card.id);
+  });
+
+  it("withdraws only the prompting agent's holds on UserPromptSubmit", async () => {
+    const bravo = handlers.hook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'AskUserQuestion',
+      tool_input: { questions: [] },
+      agent_id: 'aprobe-bravo-babf58016882bc72',
+      timeout: 10000,
+    });
+    const alpha = handlers.hook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Bash',
+      tool_input: { command: 'ls' },
+      agent_id: 'aprobe-alpha-84fd551b27de6433',
+      timeout: 10000,
+    });
+
+    await handlers.hook({
+      hook_event_name: 'UserPromptSubmit',
+      agent_id: 'aprobe-bravo-babf58016882bc72',
+      prompt: 'never mind, do the other thing',
+    });
+
+    expect(await bravo).toEqual({ status: 200, body: {} });
+    expect(permits.list().map((p) => p.agent)).toEqual(['probe-alpha']);
+    permits.resolve(permits.list()[0].id, 'allow');
+    await alpha;
+  });
+
+  it("withdraws the lead's holds when the lead's session ends, and not when another session does", async () => {
+    const handlers = createHookHandlers({ store, permits, leadSessionId: () => 'lead-sid' });
+    const held = handlers.hook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'AskUserQuestion',
+      tool_input: { questions: [] },
+      session_id: 'lead-sid',
+      timeout: 10000,
+    });
+
+    await handlers.hook({ hook_event_name: 'SessionEnd', session_id: 'someone-else' });
+    expect(permits.list()).toHaveLength(1);
+
+    await handlers.hook({ hook_event_name: 'SessionEnd', session_id: 'lead-sid' });
+    expect(await held).toEqual({ status: 200, body: {} });
+    expect(permits.list()).toEqual([]);
+  });
+
+  it("carries Claude's text before the call as the question card's context", async () => {
+    const questions = [
+      { question: 'Where should the choice live?', header: 'Storage', options: [{ label: 'URL' }, { label: 'localStorage' }], multiSelect: false },
+    ];
+    const file = path.join(dir, 'lead.jsonl');
+    await fs.writeFile(
+      file,
+      `${JSON.stringify({
+        type: 'assistant',
+        uuid: 'a1',
+        timestamp: '2026-10-17T10:00:00.000Z',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'That decides where she writes it, so I would rather ask than guess.' },
+            { type: 'tool_use', id: 'tu1', name: 'AskUserQuestion', input: { questions } },
+          ],
+        },
+      })}\n`,
+    );
+
+    const pending = handlers.hook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'AskUserQuestion',
+      tool_input: { questions },
+      transcript_path: file,
+      timeout: 10000,
+    });
+
+    await vi.waitFor(() => expect(of(store.replay(), 'needsyou')).toHaveLength(1));
+    const card = of(store.replay(), 'needsyou')[0].payload as NeedsYouItem;
+    expect(card.context).toBe('That decides where she writes it, so I would rather ask than guess.');
+    permits.resolve(card.id, 'allow');
+    await pending;
+  });
+
+  it('leaves context off a question card whose transcript cannot be read', async () => {
+    const pending = handlers.hook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'AskUserQuestion',
+      tool_input: { questions: [] },
+      transcript_path: path.join(dir, 'missing.jsonl'),
+      timeout: 10000,
+    });
+
+    await vi.waitFor(() => expect(of(store.replay(), 'needsyou')).toHaveLength(1));
+    const card = of(store.replay(), 'needsyou')[0].payload as NeedsYouItem;
+    expect(card).not.toHaveProperty('context');
+    permits.resolve(card.id, 'allow');
+    await pending;
+  });
+
+  it('resolves a held PermissionRequest once PostToolUse shows the tool already ran', async () => {
+    const pending = handlers.hook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'AskUserQuestion',
+      tool_input: { questions: [] },
+      agent_id: 'aprobe-bravo-babf58016882bc72',
+      timeout: 10000,
+    });
+
+    const card = of(store.replay(), 'needsyou').at(-1)!.payload as NeedsYouItem;
+    expect(permits.list().map((p) => p.id)).toEqual([card.id]);
+
+    await handlers.hook({
+      hook_event_name: 'PostToolUse',
+      tool_name: 'AskUserQuestion',
+      agent_id: 'aprobe-bravo-babf58016882bc72',
+    });
+
+    expect(permits.list()).toEqual([]);
+    const resolved = await pending;
+    expect(resolved.body).toEqual({
+      hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } },
+    });
+    expect((of(store.replay(), 'needsyou-resolved').at(-1)!.payload as { id: string }).id).toBe(card.id);
+  });
+
+  it('answers a denied PermissionRequest with the reason as decision.message', async () => {
+    const pending = handlers.hook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Bash',
+      tool_input: { command: 'rm -rf migrations/legacy' },
+      agent_id: 'aprobe-bravo-babf58016882bc72',
+      timeout: 10000,
+    });
+
+    const card = of(store.replay(), 'needsyou').at(-1)!.payload as NeedsYouItem;
+    expect(permits.resolve(card.id, 'deny', 'not while migrations are running')).toBe(true);
+    const resolved = await pending;
+    expect(resolved).toEqual({
+      status: 200,
+      body: {
+        hookSpecificOutput: {
+          hookEventName: 'PermissionRequest',
+          decision: { behavior: 'deny', message: 'not while migrations are running' },
+        },
+      },
+    });
+    expect(resolved.body).not.toHaveProperty('hookSpecificOutput.permissionDecision');
+  });
+
+  it('carries AskUserQuestion questions on the needsyou item', async () => {
+    const questions = [
+      { question: 'ship it?', header: 'Ship', options: [{ label: 'yes' }, { label: 'no' }], multiSelect: false },
+    ];
+    const pending = handlers.hook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'AskUserQuestion',
+      tool_input: { questions },
+      agent_id: 'aprobe-bravo-babf58016882bc72',
+      timeout: 10000,
+    });
+
+    const card = of(store.replay(), 'needsyou').at(-1)!.payload as NeedsYouItem;
+    expect(card.questions).toEqual(questions);
+    expect(card.detail).toBe('AskUserQuestion — 1 question(s) for you');
+
+    permits.resolve(card.id, 'allow');
+    await pending;
+  });
+
+  it('returns updatedInput on the response when the decision carries it', async () => {
+    const pending = handlers.hook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'AskUserQuestion',
+      tool_input: { questions: [{ question: 'ship it?', header: 'Ship', options: [], multiSelect: false }] },
+      agent_id: 'aprobe-bravo-babf58016882bc72',
+      timeout: 10000,
+    });
+
+    const card = of(store.replay(), 'needsyou').at(-1)!.payload as NeedsYouItem;
+    const updatedInput = { questions: card.questions, answers: { 'ship it?': 'yes' } };
+    permits.resolve(card.id, 'allow', undefined, updatedInput);
+    const resolved = await pending;
+    expect(resolved).toEqual({
+      status: 200,
+      body: {
+        hookSpecificOutput: {
+          hookEventName: 'PermissionRequest',
+          decision: { behavior: 'allow', updatedInput },
+        },
+      },
+    });
+  });
+});
+
+describe("the band's TaskList poll", () => {
+  it('appends nothing and touches nobody for a TaskList hook with no agent_id', async () => {
+    const touched: string[] = [];
+    const h = createHookHandlers({ store, permits, onAgentActivity: (a) => touched.push(a) });
+
+    await h.hook({ hook_event_name: 'PreToolUse', tool_name: 'TaskList', session_id: 'lead-session-id' });
+    await h.hook({ hook_event_name: 'PostToolUse', tool_name: 'TaskList', session_id: 'lead-session-id' });
+
+    expect(of(store.replay(), 'hook')).toHaveLength(0);
+    expect(touched).toEqual([]);
+  });
+
+  it("keeps a teammate's own TaskList call", async () => {
+    const touched: string[] = [];
+    const h = createHookHandlers({ store, permits, onAgentActivity: (a) => touched.push(a) });
+
+    await h.hook({ hook_event_name: 'PreToolUse', tool_name: 'TaskList', agent_id: 'probe-alpha@team', session_id: 'x' });
+
+    expect(of(store.replay(), 'hook')).toHaveLength(1);
+    expect(touched).toEqual(['probe-alpha']);
+  });
+});
+
+describe('--read-only', () => {
+  it('answers PermissionRequest immediately instead of holding the turn', async () => {
+    // Holding in read-only was the worst case: the card renders with disabled
+    // buttons, /api/permits 409s, nobody can resolve it, and the agent stalls
+    // for the full 540s auto-deny.
+    const readOnly = createHookHandlers({ store, permits, readOnly: true });
+    const out = await readOnly.hook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Bash',
+      tool_input: { command: 'rm -rf migrations/legacy' },
+      agent_id: 'aprobe-bravo-babf58016882bc72',
+      timeout: 10000,
+    });
+    expect(out).toEqual({ status: 200, body: {} });
+    expect(permits.list()).toEqual([]);
+    expect(of(store.replay(), 'needsyou')).toEqual([]);
+  });
+});
+
+describe('hooks from a foreign session with no agent_id', () => {
+  it('is not appended and does not touch the agent, when the session differs from the lead', async () => {
+    const touched: string[] = [];
+    const withLead = createHookHandlers({
+      store,
+      permits,
+      leadSessionId: () => 'lead-session-id',
+      onAgentActivity: (a) => touched.push(a),
+    });
+
+    const res = await withLead.hook({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      session_id: 'some-other-session',
+    });
+
+    expect(res).toEqual({ status: 200, body: {} });
+    expect(of(store.replay(), 'hook')).toHaveLength(0);
+    expect(touched).toEqual([]);
+  });
+
+  it('is appended as team-lead when the session matches the lead', async () => {
+    const withLead = createHookHandlers({ store, permits, leadSessionId: () => 'lead-session-id' });
+
+    await withLead.hook({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      session_id: 'lead-session-id',
+    });
+
+    const events = of(store.replay(), 'hook');
+    expect(events).toHaveLength(1);
+    expect(events[0].agent).toBe('team-lead');
+  });
+
+  it('is still appended under the teammate name when the hook carries an agent_id', async () => {
+    const withLead = createHookHandlers({ store, permits, leadSessionId: () => 'lead-session-id' });
+
+    await withLead.hook({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      session_id: 'some-other-session',
+      agent_id: 'aprobe-alpha-84fd551b27de6433',
+    });
+
+    const events = of(store.replay(), 'hook');
+    expect(events).toHaveLength(1);
+    expect(events[0].agent).toBe('probe-alpha');
+  });
+
+  it('is appended when the lead session is unknown', async () => {
+    const noLead = createHookHandlers({ store, permits });
+
+    await noLead.hook({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      session_id: 'some-other-session',
+    });
+
+    const events = of(store.replay(), 'hook');
+    expect(events).toHaveLength(1);
+    expect(events[0].agent).toBe('team-lead');
+  });
+
+  it('holds a PermissionRequest tagged with its session and appends nothing, so the card surfaces when the console shows that session', async () => {
+    const published: number[] = [];
+    const withLead = createHookHandlers({
+      store,
+      permits,
+      leadSessionId: () => 'lead-session-id',
+      publish: () => published.push(1),
+    });
+    const questions = [{ question: 'Ship it?', header: 'Ship', options: [{ label: 'Yes', description: '' }], multiSelect: false }];
+
+    const pending = withLead.hook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'AskUserQuestion',
+      tool_input: { questions },
+      session_id: 'some-other-session',
+      timeout: 10000,
+    });
+
+    const [held] = permits.list();
+    expect(held).toMatchObject({ session: 'some-other-session', toolName: 'AskUserQuestion', agent: 'team-lead' });
+    expect(held.card).toMatchObject({ id: held.id, kind: 'permission', questions, detail: 'AskUserQuestion — 1 question(s) for you' });
+    expect(store.replay()).toEqual([]);
+    expect(published).toHaveLength(1);
+
+    permits.resolve(held.id, 'allow', undefined, { questions, answers: { Ship: 'Yes' } });
+    expect(await pending).toEqual({
+      status: 200,
+      body: {
+        hookSpecificOutput: {
+          hookEventName: 'PermissionRequest',
+          decision: { behavior: 'allow', updatedInput: { questions, answers: { Ship: 'Yes' } } },
+        },
+      },
+    });
+    expect(store.replay()).toEqual([]);
+    expect(published).toHaveLength(2);
+  });
+
+  it("leaves a foreign hold alone on the lead's own PostToolUse and prompt, and settles it on that session's once it is the lead", async () => {
+    let lead = 'lead-session-id';
+    const withLead = createHookHandlers({ store, permits, leadSessionId: () => lead });
+    const ask = { hook_event_name: 'PermissionRequest', tool_name: 'AskUserQuestion', tool_input: { questions: [] }, timeout: 10000 };
+    const pending = withLead.hook({ ...ask, session_id: 'some-other-session' });
+
+    await withLead.hook({ hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion', session_id: 'lead-session-id' });
+    await withLead.hook({ hook_event_name: 'UserPromptSubmit', prompt: 'carry on', session_id: 'lead-session-id' });
+    expect(permits.list()).toHaveLength(1);
+
+    lead = 'some-other-session';
+    await withLead.hook({ hook_event_name: 'UserPromptSubmit', prompt: 'never mind', session_id: 'some-other-session' });
+    expect(permits.list()).toEqual([]);
+    expect(await pending).toEqual({ status: 200, body: {} });
+  });
+
+  it('is not dropped for a SessionEnd, so a foreign session end still reaches the SessionEnd branch', async () => {
+    const withLead = createHookHandlers({
+      store,
+      permits,
+      leadSessionId: () => 'lead-session-id',
+    });
+
+    await withLead.hook({ hook_event_name: 'SessionEnd', session_id: 'some-other-session' });
+    await new Promise((r) => setTimeout(r, 400));
+
+    expect(of(store.replay(), 'hook')).toHaveLength(1);
+  });
+});
+
+describe('SessionEnd', () => {
+  it("hands the ending session's id to onSessionEnd and never exits on its own, not even for the lead's", async () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    try {
+      const ended: string[] = [];
+      const withLead = createHookHandlers({
+        store,
+        permits,
+        leadSessionId: () => 'lead-session-id',
+        onSessionEnd: (sid) => ended.push(sid),
+      });
+      await withLead.hook({ hook_event_name: 'SessionEnd', session_id: 'lead-session-id' });
+      await withLead.hook({ hook_event_name: 'SessionEnd', session_id: 'some-other-session' });
+      await new Promise((r) => setTimeout(r, 400));
+
+      expect(exit).not.toHaveBeenCalled();
+      expect(ended).toEqual(['lead-session-id', 'some-other-session']);
+      expect(of(store.replay(), 'hook')).toHaveLength(2);
+    } finally {
+      exit.mockRestore();
+    }
+  });
+});
+
+describe('statusline', () => {
+  it('extracts cost, context window and both rate limits', async () => {
+    const res = await handlers.statusline({
+      cost: { total_cost_usd: 8.4 },
+      context_window: { used_tokens: 53100, max_tokens: 1000000 },
+      rate_limits: {
+        five_hour: { used_pct: 41, resets_at: '2026-08-27T20:00:00Z' },
+        seven_day: { used_pct: 12 },
+      },
+      gitBranch: 'HEAD',
+    });
+    expect(res).toEqual({ status: 200, body: {} });
+
+    const payload = of(store.replay(), 'statusline').at(-1)!.payload as StatuslinePayload;
+    expect(payload.totalCostUsd).toBe(8.4);
+    expect(payload.contextTokens).toBe(53100);
+    expect(payload.contextWindow).toBe(1000000);
+    expect(payload.fiveHourPct).toBe(41);
+    expect(payload.sevenDayPct).toBe(12);
+    expect(payload.resetsAt).toBe('2026-08-27T20:00:00Z');
+    expect(payload.branch).toBe('HEAD');
+  });
+
+  it('answers 200 on a body with none of the expected fields', async () => {
+    expect(await handlers.statusline({})).toEqual({ status: 200, body: {} });
+    expect(await handlers.statusline(undefined)).toEqual({ status: 200, body: {} });
+  });
+});
+
+describe('substatus', () => {
+  it('appends one event per teammate task entry', async () => {
+    const res = await handlers.substatus({
+      tasks: [
+        { name: 'probe-charlie', type: 'in_process_teammate', tokenCount: 23639, contextWindowSize: 200000, status: 'idle', model: 'claude-haiku-4-5-20251001' },
+        { agentId: 'aprobe-alpha-84fd551b27de6433', type: 'in_process_teammate', tokenCount: 34469, contextWindowSize: 1000000, status: 'working' },
+      ],
+    });
+    expect(res).toEqual({ status: 200, body: {} });
+
+    const payloads = of(store.replay(), 'substatus').map((e) => e.payload as SubstatusPayload);
+    expect(payloads).toHaveLength(2);
+    expect(payloads[0]).toEqual({
+      agent: 'probe-charlie',
+      tokenCount: 23639,
+      contextWindowSize: 200000,
+      status: 'idle',
+      model: 'claude-haiku-4-5-20251001',
+    });
+    expect(payloads[1].agent).toBe('probe-alpha');
+    expect(payloads[1].tokenCount).toBe(34469);
+  });
+
+  it('drops a task row with no type field, rather than treating it as a teammate', async () => {
+    const res = await handlers.substatus({
+      tasks: [
+        { name: 'probe-charlie', tokenCount: 23639, contextWindowSize: 200000, status: 'idle' },
+      ],
+    });
+    expect(res).toEqual({ status: 200, body: {} });
+    expect(of(store.replay(), 'substatus')).toHaveLength(0);
+  });
+
+  it('answers 200 when tasks is missing', async () => {
+    expect(await handlers.substatus({})).toEqual({ status: 200, body: {} });
+    expect(store.replay()).toHaveLength(0);
+  });
+});
+
+describe('drain on agent activity', () => {
+  it('drains that agent on every hook event', async () => {
+    const drained: string[] = [];
+    const h = createHookHandlers({ store, permits, onAgentActivity: (a) => drained.push(a) });
+
+    await h.hook({ hook_event_name: 'PreToolUse', agent_id: 'aprobe-alpha-84fd551b27de6433' });
+    await h.hook({ hook_event_name: 'PostToolUse', agent_id: 'aprobe-alpha-84fd551b27de6433' });
+    await h.hook({ hook_event_name: 'Stop', agent_id: 'probe-bravo@session-98b0b4a7' });
+    await h.hook({ hook_event_name: 'SessionStart' });
+
+    expect(drained).toEqual(['probe-alpha', 'probe-alpha', 'probe-bravo', 'team-lead']);
+  });
+
+  it('drains BEFORE PermissionRequest waits on the operator', async () => {
+    // The operator is being asked to approve something and the handler can hold
+    // for ten minutes; the transcript explaining why has to be on screen while
+    // they decide, not after they have decided.
+    const drained: string[] = [];
+    const h = createHookHandlers({ store, permits, onAgentActivity: (a) => drained.push(a) });
+    const pending = h.hook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Bash',
+      tool_input: { command: 'rm -rf migrations/legacy' },
+      agent_id: 'aprobe-bravo-babf58016882bc72',
+      timeout: 10000,
+    });
+
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(settled).toBe(false);
+    expect(drained).toEqual(['probe-bravo']);
+
+    permits.resolve(permits.list()[0].id, 'deny');
+    await pending;
+  });
+
+  it('drains the lead on statusline and each teammate on substatus, and no other row type', async () => {
+    const drained: string[] = [];
+    const h = createHookHandlers({ store, permits, onAgentActivity: (a) => drained.push(a) });
+
+    await h.statusline({ cost: { total_cost_usd: 1 } });
+    await h.substatus({
+      tasks: [
+        { agentId: 'probe-alpha', type: 'in_process_teammate' },
+        { agentId: 'a9f20a3464bfe2362', name: 'searcher', type: 'task' },
+        { agentId: 'a3eeaa94f896ac303', name: 'plan-author', type: 'workflow' },
+        { name: 'probe-charlie', type: 'in_process_teammate' },
+      ],
+    });
+
+    expect(drained).toEqual(['team-lead', 'probe-alpha', 'probe-charlie']);
+  });
+
+  it('serves the whole handler even when the drain throws', async () => {
+    // A drain is a nicety; a hook that fails an agent's turn is not. The drain
+    // runs before the permission hold and inside the substatus loop, so a throw
+    // that escaped would cost the operator their decision card and every row
+    // after the first, not just the transcript line.
+    const h = createHookHandlers({
+      store,
+      permits,
+      onAgentActivity: () => {
+        throw new Error('drain exploded');
+      },
+    });
+
+    const pending = h.hook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Bash',
+      tool_input: { command: 'rm -rf migrations/legacy' },
+      agent_id: 'aprobe-bravo-babf58016882bc72',
+      timeout: 10000,
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(permits.list()).toHaveLength(1);
+    expect(of(store.replay(), 'needsyou')).toHaveLength(1);
+    permits.resolve(permits.list()[0].id, 'deny');
+    expect((await pending).status).toBe(200);
+
+    expect(
+      await h.substatus({
+        tasks: [
+          { name: 'probe-charlie', type: 'in_process_teammate' },
+          { name: 'probe-alpha', type: 'in_process_teammate' },
+        ],
+      }),
+    ).toEqual({ status: 200, body: {} });
+    expect(of(store.replay(), 'substatus')).toHaveLength(2);
+
+    expect(await h.statusline({})).toEqual({ status: 200, body: {} });
+    expect(of(store.replay(), 'statusline')).toHaveLength(1);
+  });
+});
+
+describe('progress reminder', () => {
+  const task = (id: string, owner: string, status: TaskPayload['status'], progress?: number): TaskPayload => ({
+    id,
+    subject: `task ${id}`,
+    description: '',
+    owner,
+    status,
+    blocks: [],
+    blockedBy: [],
+    ...(progress === undefined ? {} : { metadata: { progress } }),
+  });
+  const at = (ts: number, payload: TaskPayload): StoredEvent => ({ seq: ts, ts, kind: 'task', payload });
+  const post = { hook_event_name: 'PostToolUse', tool_name: 'Bash', agent_id: 'aprobe-alpha-84fd551b27de6433' };
+
+  it('finds the in-progress task whose progress has not moved for the stall window', () => {
+    const events = [at(0, task('7', 'probe-alpha', 'in_progress', 0)), at(60_000, task('7', 'probe-alpha', 'in_progress', 0))];
+    expect(stalledTask(events, 'probe-alpha', PROGRESS_STALL_MS)?.id).toBe('7');
+  });
+
+  it('restarts the clock when progress moves', () => {
+    const events = [at(0, task('7', 'probe-alpha', 'in_progress', 0)), at(60_000, task('7', 'probe-alpha', 'in_progress', 40))];
+    expect(stalledTask(events, 'probe-alpha', PROGRESS_STALL_MS)).toBeUndefined();
+    expect(stalledTask(events, 'probe-alpha', 60_000 + PROGRESS_STALL_MS)?.id).toBe('7');
+  });
+
+  it('forgets a task whose file was deleted', () => {
+    const removed: StoredEvent = { seq: 1, ts: 1, kind: 'task-removed', payload: { id: '7' } };
+    expect(stalledTask([at(0, task('7', 'probe-alpha', 'in_progress', 0)), removed], 'probe-alpha', PROGRESS_STALL_MS)).toBeUndefined();
+  });
+
+  it('ignores tasks another agent owns or that are not in progress', () => {
+    const events = [
+      at(0, task('7', 'probe-bravo', 'in_progress', 0)),
+      at(0, task('8', 'probe-alpha', 'completed', 100)),
+      at(0, task('9', 'probe-alpha', 'pending')),
+    ];
+    expect(stalledTask(events, 'probe-alpha', PROGRESS_STALL_MS)).toBeUndefined();
+  });
+
+  it('reminds a teammate after its next tool call, at most once per stall window', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(0);
+      store.append('task', task('7', 'probe-alpha', 'in_progress', 0), 'probe-alpha');
+      vi.setSystemTime(PROGRESS_STALL_MS);
+      expect((await handlers.hook(post)).body).toEqual({
+        hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: expect.stringContaining('Task 7') },
+      });
+      expect((await handlers.hook(post)).body).toEqual({});
+      vi.setSystemTime(2 * PROGRESS_STALL_MS);
+      expect((await handlers.hook(post)).body).toHaveProperty('hookSpecificOutput');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stays silent for the lead and on a read-only console', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(0);
+      store.append('task', task('7', 'probe-alpha', 'in_progress', 0), 'probe-alpha');
+      store.append('task', task('8', 'team-lead', 'in_progress', 0), 'team-lead');
+      vi.setSystemTime(PROGRESS_STALL_MS);
+      expect((await handlers.hook({ hook_event_name: 'PostToolUse', tool_name: 'Bash' })).body).toEqual({});
+      const readOnly = createHookHandlers({ store, permits, readOnly: true });
+      expect((await readOnly.hook(post)).body).toEqual({});
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

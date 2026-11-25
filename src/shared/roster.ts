@@ -1,0 +1,111 @@
+import type { Agent } from './domain';
+
+export interface TeamConfigMember {
+  agentId: string; name: string; agentType?: string; color?: string; model?: string;
+  prompt?: string; planModeRequired?: boolean; cwd?: string; joinedAt: number;
+  tmuxPaneId: string; backendType?: string; subscriptions: string[];
+}
+export interface TeamConfig {
+  name: string; createdAt: number; leadAgentId: string; leadSessionId: string;
+  members: TeamConfigMember[];
+}
+export interface Sidecar {
+  agentType: string; description: string; name: string; spawnDepth: number;
+  model: string; taskKind: string; teamName: string; color?: string;
+  planModeRequired?: boolean; permissionMode?: string;
+  /**
+   * The parent `Task`/`Agent` tool_use this file was spawned by. Written only
+   * for an ordinary subagent — a teammate carries `taskKind`/`teamName` instead
+   * and no toolUseId at all, so its presence is what separates the two kinds of
+   * sidecar that share one directory.
+   */
+  toolUseId?: string;
+}
+export interface AgentIdentity {
+  name: string; agentId: string; isLead: boolean; agentType: string;
+  rawModel?: string; role: string; color?: string; joinedAt: number;
+  transcriptPath?: string;
+}
+
+const ROLE_MAX = 80;
+
+// The sidecar's agentType is the teammate name again (spec §2.2), so it is only
+// usable as a subagent type when it differs from the name.
+function typeFromSidecar(meta: Sidecar | undefined): string {
+  if (!meta) return '';
+  return meta.agentType && meta.agentType !== meta.name ? meta.agentType : '';
+}
+
+function roleOf(meta: Sidecar | undefined, prompt: string | undefined): string {
+  const described = meta?.description?.trim();
+  if (described) return described;
+  const flat = (prompt ?? '').replace(/\s+/g, ' ').trim();
+  return flat.length > ROLE_MAX ? `${flat.slice(0, ROLE_MAX)}…` : flat;
+}
+
+export function buildRoster(
+  config: TeamConfig | null,
+  sidecars: Array<{ meta: Sidecar; transcriptPath: string }>,
+): AgentIdentity[] {
+  const byName = new Map(sidecars.map((s) => [s.meta.name, s]));
+  const roster: AgentIdentity[] = [];
+  const claimed = new Set<string>();
+
+  for (const member of config?.members ?? []) {
+    const sidecar = byName.get(member.name);
+    roster.push({
+      name: member.name,
+      agentId: member.agentId,
+      isLead: member.agentId === config?.leadAgentId,
+      agentType: member.agentType ?? typeFromSidecar(sidecar?.meta),
+      rawModel: member.model ?? sidecar?.meta.model,
+      role: roleOf(sidecar?.meta, member.prompt),
+      color: member.color ?? sidecar?.meta.color,
+      joinedAt: member.joinedAt,
+      transcriptPath: sidecar?.transcriptPath,
+    });
+    claimed.add(member.name);
+  }
+
+  for (const sidecar of sidecars) {
+    if (claimed.has(sidecar.meta.name)) continue;
+    roster.push({
+      name: sidecar.meta.name,
+      agentId: `${sidecar.meta.name}@${sidecar.meta.teamName}`,
+      isLead: false,
+      agentType: typeFromSidecar(sidecar.meta),
+      rawModel: sidecar.meta.model,
+      role: roleOf(sidecar.meta, undefined),
+      color: sidecar.meta.color,
+      joinedAt: 0,
+      transcriptPath: sidecar.transcriptPath,
+    });
+  }
+
+  return roster;
+}
+
+/**
+ * Lead first, always — its sticky-left pin and its composer are load-bearing,
+ * so it stays first even idle. Then non-idle teammates (working, plan_pending,
+ * failed, blocked) — attention states must not be pushed back, they need the
+ * operator. Then idle teammates. Then departed, last. Join order kept stable
+ * within each group (sorting by recency would make columns swap places under
+ * the operator's cursor every time an agent acted).
+ *
+ * Idle moving to the end is operator-requested, and recomputed from status on
+ * every render: an agent going idle moves back immediately, and one picking
+ * up work again moves forward again, with no timer or debounce. The wall, the
+ * keyboard's column jumps, the grid and the overview all show one roster and
+ * must walk it in the same order.
+ */
+export function wallOrder(agents: Agent[]): Agent[] {
+  const lead = agents.find((a) => a.isLead);
+  const rest = lead ? agents.filter((a) => a !== lead) : agents;
+  return [
+    ...(lead ? [lead] : []),
+    ...rest.filter((a) => a.status !== 'idle' && a.status !== 'departed'),
+    ...rest.filter((a) => a.status === 'idle'),
+    ...rest.filter((a) => a.status === 'departed'),
+  ];
+}

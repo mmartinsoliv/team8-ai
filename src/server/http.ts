@@ -1,0 +1,662 @@
+import http, { type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import type { Permits } from './control/permits';
+import type { Outbox } from './control/outbox';
+import type { HookHandlers } from './ingest/hooks';
+import type { StreamHub } from './stream';
+import { sendToInbox } from './control/mailbox';
+import type { Brief, TeamState, TranscriptLine } from '../shared/domain';
+import { PLUGIN_DIR } from './lifecycle';
+
+// Who the operator is when they speak through the console. Not a team member,
+// so it never collides with a real name, and it survives the SAFE_NAME gate in
+// the inbox writer.
+export { CONSOLE_SENDER } from '../shared/domain';
+import { CONSOLE_SENDER } from '../shared/domain';
+
+export const READ_ONLY_BODY = {
+  error: 'read-only',
+  message: 'the console was started with --read-only; control routes are disabled',
+};
+
+export const NO_BUNDLE_BODY = {
+  error: 'no build',
+  message: 'dist/web is missing — run `npm run build` first',
+};
+
+export const FORBIDDEN_BODY = {
+  error: 'forbidden',
+  message: 'the console only answers same-origin requests from this machine',
+};
+
+export const UNSUPPORTED_MEDIA_BODY = {
+  error: 'unsupported media type',
+  message: 'content-type: application/json is required',
+};
+
+export const BAD_SEGMENT_BODY = {
+  error: 'bad request',
+  message: 'name must match /^[A-Za-z0-9_-]+$/',
+};
+
+/**
+ * Where the built bundle lives, resolved from THIS MODULE rather than from
+ * `process.cwd()`. The launcher starts the server with `nohup node
+ * "$ROOT/dist/server/index.js"` and never cd's, so the server inherits the
+ * Claude session's cwd — the user's project, not this repo — and a cwd-relative
+ * default served `503 {"error":"no build"}` at the announced URL for everyone
+ * whose project is not this one.
+ *
+ * PLUGIN_DIR does the same two-layout resolution LAUNCH_SCRIPT relies on.
+ */
+export const DEFAULT_WEB_DIST = path.join(PLUGIN_DIR, 'dist', 'web');
+
+const MIME_TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+};
+
+function contentTypeFor(file: string): string {
+  return MIME_TYPES[path.extname(file).toLowerCase()] ?? 'application/octet-stream';
+}
+
+// `/assets/*` maps to a real file; every other non-API GET (including `/`) is
+// the SPA shell, since the client router owns the rest of the path space.
+async function serveWebBundle(res: ServerResponse, webDist: string, route: string): Promise<void> {
+  const isAsset = route.startsWith('/assets/');
+  const target = path.join(webDist, isAsset ? route : 'index.html');
+  if (!target.startsWith(path.join(webDist, path.sep))) {
+    json(res, 404, { error: 'not found', message: `no route for GET ${route}` });
+    return;
+  }
+  try {
+    const data = await fs.readFile(target);
+    res.writeHead(200, {
+      'content-type': contentTypeFor(target),
+      'content-length': data.length,
+    });
+    res.end(data);
+  } catch {
+    if (isAsset) {
+      json(res, 404, { error: 'not found', message: `no route for GET ${route}` });
+    } else {
+      json(res, 503, NO_BUNDLE_BODY);
+    }
+  }
+}
+
+/**
+ * Why `missing` covers both an absent team and an unreadable one: from the
+ * client's side they are a single branch — refresh the listing and the entry is
+ * gone, since the listing omits an unusable config for the same reason. The
+ * difference is worth a message and a log line, not a second status code.
+ */
+export type SelectTeamOutcome =
+  | { ok: true; changed: boolean }
+  | { ok: false; reason: 'missing' | 'busy'; message: string };
+
+export interface HttpDeps {
+  permits: Permits;
+  outbox: Outbox;
+  /** The session on screen, whose lead the outbox serves. */
+  leadSessionId?: () => string | undefined;
+  hooks: HookHandlers;
+  stream: StreamHub;
+  state: () => TeamState;
+  readOnly: boolean;
+  leadName?: string;
+  /** Older transcript lines for one agent — the wall's scrollback. */
+  history?: (agent: string) => TranscriptLine[];
+  lineText?: (agent: string, id: string) => string | undefined;
+  /** One task's section of the plan the lead is writing, for a plan-tab row opened by hand. */
+  planTask?: (n: number) => string | undefined;
+  /**
+   * One run's script source, read from disk on demand — the other half of
+   * `leanRun`, which strips it from every frame because it is 65% of the bytes.
+   * Null when the run left no source, or when `runId` names no ingested run.
+   */
+  workflowScript?: (
+    runId: string,
+  ) => Promise<{ source: 'as-executed' | 'snapshot'; path: string; script: string } | null>;
+  /** Re-points the console at another team; the SSE frame carries the result. */
+  selectTeam?: (name: string) => Promise<SelectTeamOutcome>;
+  /** Same, at a lone session that never formed a team. */
+  selectSession?: (sessionId: string) => Promise<SelectTeamOutcome>;
+  /**
+   * The stream for a tab on `/s/<id>`: the console's own when that session is
+   * on screen or no other tab holds the console, else a read-only one of its
+   * own. Null when nothing on disk answers to the id.
+   */
+  streamFor?: (sessionId: string) => Promise<StreamHub | null>;
+  /**
+   * The overview's brief, rewritten on demand. Null when the id names a session
+   * this console is not the one showing — there is one session on screen, and a
+   * brief for another would be answered from state nobody here holds.
+   */
+  generateBrief?: (sessionId: string) => Promise<Brief | null>;
+  /** Spec §5.4's shutdown action: `/api/shutdown`, which a newer build uses to replace this one. */
+  onShutdown?: () => void;
+  /** Directory holding the built web bundle (default: {@link DEFAULT_WEB_DIST}). */
+  webDist?: string;
+}
+
+const AGENT_ROUTE = /^\/api\/agents\/([^/]+)\/(message|interrupt|stop|respawn)$/;
+const PLAN_ROUTE = /^\/api\/plans\/([^/]+)\/(approve|reject)$/;
+const PERMIT_ROUTE = /^\/api\/permits\/([^/]+)\/(allow|deny)$/;
+const OUTBOX_ROUTE = /^\/api\/outbox\/([^/]+)$/;
+const OUTBOX_ACK_ROUTE = /^\/api\/outbox\/([^/]+)\/ack$/;
+const WORKFLOW_SCRIPT_ROUTE = /^\/api\/workflow\/([^/]+)\/script$/;
+const TEAM_SELECT_ROUTE = /^\/api\/teams\/([^/]+)\/select$/;
+const SESSION_SELECT_ROUTE = /^\/api\/select-session\/([^/]+)$/;
+const SESSION_BRIEF_ROUTE = /^\/api\/sessions\/([^/]+)\/brief$/;
+
+/**
+ * The route patterns exclude a literal `/`, but every id below is
+ * percent-decoded afterwards, so `%2F` would smuggle a separator back in past
+ * the guard and `path.join` would resolve the `..` it precedes. Decoding is
+ * therefore always paired with this allowlist, and the result is what reaches
+ * the filesystem — never the raw segment.
+ */
+const SAFE_SEGMENT = /^[A-Za-z0-9_-]+$/;
+
+function decodeSegment(raw: string): string | null {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    return null; // a malformed escape such as `%zz`
+  }
+  return SAFE_SEGMENT.test(decoded) ? decoded : null;
+}
+
+// The server binds 127.0.0.1, but that does not protect it from a browser the
+// user is also running: a page on any origin can POST to it, and a DNS name
+// resolving to 127.0.0.1 can reach it with a foreign Host header.
+const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+
+function isLocalHost(host: string | undefined): boolean {
+  if (!host) return false;
+  try {
+    return LOCAL_HOSTS.has(new URL(`http://${host}`).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isLocalOrigin(origin: string | undefined): boolean {
+  // No Origin at all means no browser initiated it — the hook curl and the
+  // launcher's health probe are in that class.
+  if (origin === undefined) return true;
+  try {
+    return LOCAL_HOSTS.has(new URL(origin).hostname);
+  } catch {
+    return false; // includes the literal `null` origin of a sandboxed frame
+  }
+}
+
+// `content-type: text/plain` is a CORS *simple* request, so it crosses origins
+// with no preflight; requiring JSON forces a preflight this server never
+// answers, which closes the whole CSRF class.
+function isJsonBody(contentType: string | undefined): boolean {
+  return (contentType ?? '').split(';')[0].trim().toLowerCase() === 'application/json';
+}
+
+async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  for await (const c of req) chunks.push(c as Buffer);
+  const raw = Buffer.concat(chunks).toString('utf8');
+  if (raw.length === 0) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed !== null && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function json(res: ServerResponse, status: number, body: unknown): void {
+  const payload = JSON.stringify(body);
+  res.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) });
+  res.end(payload);
+}
+
+const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+// updatedInput replaces the whole tool input, so an AskUserQuestion answer has
+// to be merged onto the held input rather than sent alone. Only answers that
+// key an actual question of that held input are kept: an unrelated or
+// non-string value here came from a hostile or stale client, not the card.
+function answersFor(heldInput: unknown, rawAnswers: unknown): Record<string, string> | undefined {
+  if (!isPlainObject(heldInput) || !Array.isArray(heldInput.questions) || !isPlainObject(rawAnswers)) return undefined;
+  const questionTexts = new Set(
+    heldInput.questions.map((q) => (isPlainObject(q) ? str(q.question) : undefined)).filter((q) => q !== undefined),
+  );
+  const answers: Record<string, string> = {};
+  for (const [key, value] of Object.entries(rawAnswers)) {
+    if (typeof value === 'string' && questionTexts.has(key)) answers[key] = value;
+  }
+  return Object.keys(answers).length > 0 ? answers : undefined;
+}
+
+export function createHttpHandler(deps: HttpDeps): http.RequestListener {
+  const leadName = deps.leadName ?? 'team-lead';
+  const webDist = deps.webDist ?? DEFAULT_WEB_DIST;
+  const team = () => deps.state().teamName;
+
+  return (req, res) => {
+    void (async () => {
+      try {
+        const method = req.method ?? 'GET';
+        const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+        const route = url.pathname;
+
+        if (!isLocalHost(req.headers.host)) {
+          json(res, 403, FORBIDDEN_BODY);
+          return;
+        }
+        if (method === 'POST') {
+          if (!isLocalOrigin(req.headers.origin)) {
+            json(res, 403, FORBIDDEN_BODY);
+            return;
+          }
+          if (!isJsonBody(req.headers['content-type'])) {
+            json(res, 415, UNSUPPORTED_MEDIA_BODY);
+            return;
+          }
+        }
+
+        if (method === 'GET' && route === '/stream') {
+          const session = url.searchParams.get('session');
+          const target = session && deps.streamFor ? await deps.streamFor(session) : deps.stream;
+          if (!target) {
+            json(res, 404, { error: 'not found', message: `no session ${session}` });
+            return;
+          }
+          target.subscribe(res, session ?? undefined);
+          return;
+        }
+
+        if (method === 'GET' && route === '/health') {
+          const s = deps.state();
+          json(res, 200, {
+            ok: true,
+            team: s.teamName,
+            agents: s.agents.length,
+            version: s.build?.version,
+            build: s.build?.kind,
+            sha: s.build?.sha,
+            watching: s.watching,
+            tabs: deps.stream.clients,
+          });
+          return;
+        }
+
+        if (method === 'GET' && route === '/api/history' && deps.history) {
+          const agent = url.searchParams.get('agent') ?? '';
+          if (!agent) {
+            json(res, 400, { error: 'bad request', message: 'agent is required' });
+            return;
+          }
+          json(res, 200, { agent, lines: deps.history(agent) });
+          return;
+        }
+
+        // One row's uncapped text, fetched when the operator expands it. Kept
+        // off the poll: the cap is what holds a frame small for every agent at
+        // once, and a drawer is opened by hand, one row at a time.
+        if (method === 'GET' && route === '/api/line' && deps.lineText) {
+          const agent = url.searchParams.get('agent') ?? '';
+          const id = url.searchParams.get('id') ?? '';
+          if (!agent || !id) {
+            json(res, 400, { error: 'bad request', message: 'agent and id are required' });
+            return;
+          }
+          const text = deps.lineText(agent, id);
+          if (text === undefined) {
+            // The record aged out of the store, or the id names no such row.
+            // Either way the caller keeps the capped text it already has.
+            json(res, 404, { error: 'not found', message: 'no stored record for that line' });
+            return;
+          }
+          json(res, 200, { id, text });
+          return;
+        }
+
+        // Kept off the frame for the same reason as /api/line: a plan runs
+        // about 60 KB, and a section is opened by hand, one row at a time.
+        if (method === 'GET' && route === '/api/plan-task' && deps.planTask) {
+          const n = Number(url.searchParams.get('n'));
+          if (!Number.isInteger(n) || n < 1) {
+            json(res, 400, { error: 'bad request', message: 'n must be a task number' });
+            return;
+          }
+          const text = deps.planTask(n);
+          if (text === undefined) {
+            json(res, 404, { error: 'not found', message: 'no plan, or no such task in it' });
+            return;
+          }
+          json(res, 200, { n, text });
+          return;
+        }
+
+        // The run's source, which no frame carries. The id names a file, so it
+        // passes the same allowlist every other path segment does BEFORE the
+        // resolver — which gates it a second time, against the runs already
+        // ingested — is asked for anything.
+        if (method === 'GET' && deps.workflowScript && WORKFLOW_SCRIPT_ROUTE.test(route)) {
+          const runId = decodeSegment(WORKFLOW_SCRIPT_ROUTE.exec(route)![1]);
+          if (!runId) {
+            json(res, 400, BAD_SEGMENT_BODY);
+            return;
+          }
+          const found = await deps.workflowScript(runId);
+          if (!found) {
+            json(res, 404, { error: 'not found', message: `no source on disk for ${runId}` });
+            return;
+          }
+          json(res, 200, { runId, ...found });
+          return;
+        }
+
+        if (method === 'POST' && (route === '/hook' || route === '/statusline' || route === '/substatus')) {
+          const body = await readBody(req);
+          // A PermissionRequest can hold this response for ten minutes. If the
+          // hook's curl dies first, the socket closes with nothing written, and
+          // the hold it was waiting on has to go with it.
+          const gone = new AbortController();
+          res.on('close', () => {
+            if (!res.writableEnded) gone.abort();
+          });
+          const out =
+            route === '/hook'
+              ? await deps.hooks.hook(body, gone.signal)
+              : route === '/statusline'
+                ? await deps.hooks.statusline(body)
+                : await deps.hooks.substatus(body);
+          deps.stream.publish();
+          json(res, out.status, out.body);
+          return;
+        }
+
+        // The plugin's module, inside the lead's session, polling for the
+        // operator's messages. The poll is the heartbeat `leadReachable` reads,
+        // so the first one publishes a frame and the composer goes live at once.
+        const outboxMatch = method === 'GET' ? OUTBOX_ROUTE.exec(route) : null;
+        if (outboxMatch) {
+          const session = decodeSegment(outboxMatch[1]);
+          if (session === null) {
+            json(res, 400, BAD_SEGMENT_BODY);
+            return;
+          }
+          const was = deps.outbox.reachable(session);
+          const messages = deps.outbox.take(session).map(({ id, text, ts }) => ({ id, text, ts }));
+          if (!was) deps.stream.publish();
+          json(res, 200, { messages });
+          return;
+        }
+
+        // Every other non-API GET is the built web bundle — `/` and any
+        // client-side route the SPA owns (e.g. a deep-linked `?view=...`).
+        if (method === 'GET' && !route.startsWith('/api/')) {
+          await serveWebBundle(res, webDist, route);
+          return;
+        }
+
+        if (method !== 'POST' || !route.startsWith('/api/')) {
+          json(res, 404, { error: 'not found', message: `no route for ${method} ${route}` });
+          return;
+        }
+
+        // ABOVE the read-only gate, and the only control POST there: a switch
+        // writes nothing into Claude Code's own state, only into the console's
+        // own log directory — which read-only already writes to continuously.
+        // It changes what the console OBSERVES, the one thing read-only exists
+        // to preserve.
+        const selectMatch = TEAM_SELECT_ROUTE.exec(route);
+        const sessionMatch = SESSION_SELECT_ROUTE.exec(route);
+        const select =
+          selectMatch && deps.selectTeam
+            ? { raw: selectMatch[1], key: 'team', run: deps.selectTeam }
+            : sessionMatch && deps.selectSession
+              ? { raw: sessionMatch[1], key: 'session', run: deps.selectSession }
+              : null;
+        if (select) {
+          const name = decodeSegment(select.raw);
+          if (name === null) {
+            json(res, 400, BAD_SEGMENT_BODY);
+            return;
+          }
+          const out = await select.run(name);
+          if (out.ok) {
+            // An ack, not a TeamState: the client has /stream open and the
+            // frame published by the switch already carries the new state.
+            json(res, 200, { ok: true, [select.key]: name, changed: out.changed });
+          } else if (out.reason === 'busy') {
+            json(res, 409, { error: 'switch in progress', message: out.message });
+          } else {
+            json(res, 404, { error: 'not found', message: out.message });
+          }
+          return;
+        }
+
+        // Every /api/ route is a control write, so the read-only gate is one check.
+        if (deps.readOnly) {
+          json(res, 409, READ_ONLY_BODY);
+          return;
+        }
+
+        const briefMatch = SESSION_BRIEF_ROUTE.exec(route);
+        if (briefMatch && deps.generateBrief) {
+          const id = decodeSegment(briefMatch[1]);
+          if (id === null) {
+            json(res, 400, BAD_SEGMENT_BODY);
+            return;
+          }
+          const out = await deps.generateBrief(id);
+          if (!out) {
+            json(res, 404, { error: 'not found', message: `no session ${id} on this console` });
+            return;
+          }
+          json(res, 200, out);
+          return;
+        }
+
+        if (route === '/api/shutdown') {
+          // Answer before acting, or the caller sees a dropped connection.
+          json(res, 200, {});
+          setTimeout(() => deps.onShutdown?.(), 50).unref?.();
+          return;
+        }
+
+        const body = await readBody(req);
+        const timestamp = new Date().toISOString();
+
+        const ackMatch = OUTBOX_ACK_ROUTE.exec(route);
+        if (ackMatch) {
+          const id = decodeSegment(ackMatch[1]);
+          if (id === null) {
+            json(res, 400, BAD_SEGMENT_BODY);
+            return;
+          }
+          if (!deps.outbox.ack(id)) {
+            json(res, 404, { error: 'not found', message: `no queued message ${id}` });
+            return;
+          }
+          json(res, 200, {});
+          return;
+        }
+
+        const agentMatch = AGENT_ROUTE.exec(route);
+        if (agentMatch) {
+          const name = decodeSegment(agentMatch[1]);
+          if (name === null) {
+            json(res, 400, BAD_SEGMENT_BODY);
+            return;
+          }
+          const action = agentMatch[2];
+          if (action === 'message') {
+            const text = str(body.text);
+            if (!text) {
+              json(res, 400, { error: 'bad request', message: 'text is required' });
+              return;
+            }
+            // The lead's session runs the plugin's module and is polling: the
+            // text enters its terminal as the operator's own prompt. Otherwise
+            // the inbox, drained by the team loop, as before.
+            const session = deps.leadSessionId?.();
+            if (name === leadName && session && deps.outbox.reachable(session)) {
+              const out = deps.outbox.send(session, text);
+              deps.stream.publish();
+              json(res, 200, out);
+              return;
+            }
+            // The operator is not the lead. Messaging a teammate still arrives
+            // as the lead, because that is who directs teammates in the team's
+            // own model — but a message TO the lead stamped as the lead is
+            // addressed from the recipient to itself, which is the one shape
+            // that cannot mean anything.
+            const out = await sendToInbox(team(), name, {
+              text,
+              summary: str(body.summary),
+              from: name === leadName ? CONSOLE_SENDER : leadName,
+            });
+            deps.stream.publish();
+            json(res, 200, out);
+            return;
+          }
+          if (action === 'respawn') {
+            // There is no external respawn path; the lead has to do it, and the
+            // card says so rather than pretending this is direct.
+            const out = await sendToInbox(team(), leadName, {
+              text: `Teammate ${name} needs respawning. Re-spawn it with the same role and prompt.`,
+              summary: `respawn ${name}`,
+              from: leadName,
+            });
+            deps.stream.publish();
+            json(res, 200, out);
+            return;
+          }
+          const out = await sendToInbox(team(), name, {
+            text: JSON.stringify({ type: 'shutdown_request', reason: action, from: leadName, timestamp }),
+            summary: `${action} ${name}`,
+            from: leadName,
+          });
+          deps.stream.publish();
+          json(res, 200, out);
+          return;
+        }
+
+        const planMatch = PLAN_ROUTE.exec(route);
+        if (planMatch) {
+          const requestId = decodeSegment(planMatch[1]);
+          if (requestId === null) {
+            json(res, 400, BAD_SEGMENT_BODY);
+            return;
+          }
+          const approved = planMatch[2] === 'approve';
+          const card = deps.state().needsYou.find((n) => n.id === requestId);
+          if (!card) {
+            json(res, 404, { error: 'not found', message: `no pending plan ${requestId}` });
+            return;
+          }
+          // A permission or failure card's id can land here too — without this
+          // check we'd write a spurious plan_approval_response into that
+          // agent's inbox and leave the real permission hanging to its own
+          // auto-deny, while the operator believes they just approved it.
+          if (card.kind !== 'plan') {
+            json(res, 404, {
+              error: 'not found',
+              message: `${requestId} is a ${card.kind} card, not a plan`,
+            });
+            return;
+          }
+          // The card's agent came from an unauthenticated /hook payload, so it
+          // is caller input too — a hostile one would otherwise reach the inbox
+          // writer on the operator's own approve click.
+          if (!SAFE_SEGMENT.test(card.agent)) {
+            json(res, 400, BAD_SEGMENT_BODY);
+            return;
+          }
+          const out = await sendToInbox(team(), card.agent, {
+            text: JSON.stringify({
+              type: 'plan_approval_response',
+              requestId,
+              approved,
+              feedback: str(body.feedback),
+              timestamp,
+            }),
+            summary: `plan ${approved ? 'approved' : 'rejected'}`,
+            from: leadName,
+          });
+          deps.stream.publish();
+          json(res, 200, out);
+          return;
+        }
+
+        const permitMatch = PERMIT_ROUTE.exec(route);
+        if (permitMatch) {
+          const id = decodeSegment(permitMatch[1]);
+          if (id === null) {
+            json(res, 400, BAD_SEGMENT_BODY);
+            return;
+          }
+          const decision = permitMatch[2] === 'allow' ? 'allow' : 'deny';
+          let updatedInput: Record<string, unknown> | undefined;
+          if (decision === 'allow') {
+            const held = deps.permits.list().find((p) => p.id === id);
+            const answers = held?.toolName === 'AskUserQuestion' ? answersFor(held.input, body.answers) : undefined;
+            if (answers) updatedInput = { ...(held!.input as Record<string, unknown>), answers };
+          }
+          const ok = deps.permits.resolve(id, decision, str(body.reason), updatedInput);
+          if (!ok) {
+            json(res, 404, { error: 'not found', message: `no held permit ${id}` });
+            return;
+          }
+          deps.stream.publish();
+          json(res, 200, {});
+          return;
+        }
+
+        json(res, 404, { error: 'not found', message: `no route for ${method} ${route}` });
+      } catch (err) {
+        json(res, 500, { error: 'server error', message: (err as Error).message });
+      }
+    })();
+  };
+}
+
+export function createHttpServer(deps: HttpDeps): Server {
+  return http.createServer(createHttpHandler(deps));
+}
+
+/**
+ * Holds the port while the console boots, until main() swaps in the real
+ * handler. `{}` because a hook prints the body back to Claude Code, and `{}` is
+ * the one reply every hook event reads as "no decision".
+ */
+export function createBootingServer(): Server {
+  return http.createServer((_req, res) => {
+    res.writeHead(503, { 'content-type': 'application/json' });
+    res.end('{}');
+  });
+}
+
+export function listen(server: Server, port: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => resolve((server.address() as AddressInfo).port));
+  });
+}

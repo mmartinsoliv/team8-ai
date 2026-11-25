@@ -1,0 +1,70 @@
+name: Bump plugin version
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        required: true
+        type: choice
+        options: [patch, minor, major]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       !contains(github.event.workflow_run.head_commit.message, 'chore(plugin):'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm install
+      - run: npm run build
+
+      - name: Bump version
+        id: bump
+        # workflow_run carries no inputs, so an auto-triggered run always bumps
+        # patch — minor/major stay a deliberate workflow_dispatch choice.
+        env:
+          BUMP: ${{ inputs.bump || 'patch' }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const path = "plugin/.claude-plugin/plugin.json";
+            const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+            const [major, minor, patch] = pkg.version.split(".").map(Number);
+            const bump = process.env.BUMP;
+            const next =
+              bump === "major" ? `${major + 1}.0.0` :
+              bump === "minor" ? `${major}.${minor + 1}.0` :
+              `${major}.${minor}.${patch + 1}`;
+            pkg.version = next;
+            fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");
+            console.log(next);
+          ' > /tmp/version
+          echo "version=$(cat /tmp/version)" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add plugin/.claude-plugin/plugin.json plugin/dist
+          git commit -m "chore(plugin): ${{ steps.bump.outputs.version }}"
+          # Checkout above pins an exact SHA for the workflow_run path, which
+          # leaves HEAD detached — this workflow only ever targets main anyway.
+          git push origin HEAD:main

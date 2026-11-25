@@ -1,0 +1,1034 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import type { Server } from 'node:http';
+import { openStore, type Store } from './store';
+import { createPermits, type Permits } from './control/permits';
+import { createOutbox, type Outbox } from './control/outbox';
+import { createHookHandlers } from './ingest/hooks';
+import { createStream, type StreamHub } from './stream';
+import { fileURLToPath } from 'node:url';
+import {
+  createHttpServer,
+  listen,
+  BAD_SEGMENT_BODY,
+  DEFAULT_WEB_DIST,
+  NO_BUNDLE_BODY,
+  READ_ONLY_BODY,
+  type SelectTeamOutcome,
+} from './http';
+import { setTeamsRoot } from './control/mailbox';
+import type { InboxEntry } from '../shared/mailbox';
+import type { TeamState } from '../shared/domain';
+
+const FIXTURES = path.resolve(process.cwd(), 'fixtures');
+const TEAM = 'session-98b0b4a7';
+
+let dir: string;
+let store: Store;
+let permits: Permits;
+let outbox: Outbox;
+let hub: StreamHub;
+let state: TeamState;
+
+function emptyState(readOnly: boolean): TeamState {
+  return {
+    teamName: TEAM,
+    leadSessionId: '98b0b4a7-3206-455b-aaf6-a5a81ad1e283',
+    startedAt: 1787798107581,
+    totalTokens: 734808,
+    totalCostUsd: 0.898893,
+    agents: [],
+    tasks: [],
+    mail: [],
+    needsYou: [
+      { id: 'plan-1', kind: 'plan', agent: 'probe-alpha', reason: 'plan approval', detail: '4 steps' },
+    ],
+    readOnly,
+  };
+}
+
+let shutdowns: number;
+let selectCalls: string[];
+let selectOutcome: (name: string) => SelectTeamOutcome;
+let sessionCalls: string[];
+let sessionOutcome: (sessionId: string) => SelectTeamOutcome;
+/** What `/api/line` can resolve, keyed `agent|id`. A miss is a dropped record. */
+let lineTexts: Record<string, string>;
+/** What `/api/workflow/:runId/script` can resolve. A miss is a run with no source on disk. */
+let workflowScripts: Record<string, { source: 'as-executed' | 'snapshot'; path: string; script: string }>;
+let scriptCalls: string[];
+/** Session ids `/api/sessions/:id/brief` was asked for. */
+let briefCalls: string[];
+/** What `/api/plan-task` can resolve, keyed by task number. A miss is no plan or no such task. */
+let planTasks: Record<number, string>;
+
+
+async function boot(readOnly: boolean, webDist?: string): Promise<{ server: Server; url: string }> {
+  state = emptyState(readOnly);
+  shutdowns = 0;
+  selectCalls = [];
+  selectOutcome = () => ({ ok: true, changed: true });
+  sessionCalls = [];
+  sessionOutcome = () => ({ ok: true, changed: true });
+  lineTexts = {};
+  workflowScripts = {};
+  scriptCalls = [];
+  briefCalls = [];
+  planTasks = {};
+  hub = createStream(() => state, 50);
+  const server = createHttpServer({
+    permits,
+    outbox,
+    leadSessionId: () => state.leadSessionId,
+    hooks: createHookHandlers({ store, permits }),
+    stream: hub,
+    state: () => state,
+    readOnly,
+    webDist,
+    lineText: (agent: string, id: string) => lineTexts[`${agent}|${id}`],
+    planTask: (n: number) => planTasks[n],
+    workflowScript: (runId: string) => {
+      scriptCalls.push(runId);
+      return Promise.resolve(workflowScripts[runId] ?? null);
+    },
+    selectTeam: (name: string) => {
+      selectCalls.push(name);
+      return Promise.resolve(selectOutcome(name));
+    },
+    selectSession: (sessionId: string) => {
+      sessionCalls.push(sessionId);
+      return Promise.resolve(sessionOutcome(sessionId));
+    },
+    generateBrief: (sessionId: string) => {
+      briefCalls.push(sessionId);
+      return Promise.resolve(
+        sessionId === state.leadSessionId
+          ? {
+            model: 'claude-haiku-4-5',
+            generatedAt: 1787798107581,
+            inputs: { transcripts: 0, tasks: 0, windowMin: 5 },
+            paragraphs: [{ head: 'NOW' as const, text: 'quiet.' }],
+            usage: { in: 10, out: 5, costUsd: 0.0001 },
+            pending: false,
+            signature: '',
+          }
+          : null,
+      );
+    },
+    onShutdown: () => {
+      shutdowns++;
+    },
+  });
+  const port = await listen(server, 0);
+  return { server, url: `http://127.0.0.1:${port}` };
+}
+
+function shutdown(server: Server): Promise<void> {
+  hub.close();
+  return new Promise((r) => server.close(() => r()));
+}
+
+// Control routes require `content-type: application/json`; a bodyless POST has
+// to say so too, which is what the browser client does.
+function post(target: string, body: unknown = {}): Promise<Response> {
+  return fetch(target, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+beforeEach(async () => {
+  dir = await fs.mkdtemp(path.join(os.tmpdir(), 'http-'));
+  await fs.mkdir(path.join(dir, TEAM, 'inboxes'), { recursive: true });
+  await fs.copyFile(path.join(FIXTURES, 'config-4-members.json'), path.join(dir, TEAM, 'config.json'));
+  setTeamsRoot(dir);
+  store = openStore(path.join(dir, 'events.db'));
+  permits = createPermits();
+  outbox = createOutbox();
+});
+
+afterEach(async () => {
+  store.close();
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+describe('GET /stream', () => {
+  it('emits a snapshot event first, then coalesced state events', async () => {
+    const { server, url } = await boot(false);
+    try {
+      const res = await fetch(`${url}/stream`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe('text/event-stream');
+
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      const first = decoder.decode((await reader.read()).value);
+      expect(first).toContain('event: snapshot');
+      expect(first).toContain('"teamName":"session-98b0b4a7"');
+
+      hub.publish();
+      hub.publish();
+      const second = decoder.decode((await reader.read()).value);
+      expect(second).toContain('event: state');
+      expect(second.match(/event: state/g)).toHaveLength(1);
+
+      await reader.cancel();
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('routes a /s/ tab to the stream its session was given, and 404s one nothing answers to', async () => {
+    const main = createStream(() => emptyState(false), 50);
+    const other = createStream(() => ({ ...emptyState(false), teamName: 'other-team' }), 50);
+    const asked: string[] = [];
+    const server = createHttpServer({
+      permits,
+      outbox,
+      hooks: createHookHandlers({ store, permits }),
+      stream: main,
+      state: () => emptyState(false),
+      readOnly: false,
+      streamFor: (id: string) => {
+        asked.push(id);
+        return Promise.resolve(id === 'other' ? other : null);
+      },
+    });
+    const port = await listen(server, 0);
+    const url = `http://127.0.0.1:${port}`;
+    try {
+      const res = await fetch(`${url}/stream?session=other`);
+      expect(res.status).toBe(200);
+      const reader = res.body!.getReader();
+      expect(new TextDecoder().decode((await reader.read()).value)).toContain('"teamName":"other-team"');
+      await reader.cancel();
+      expect((await fetch(`${url}/stream?session=missing`)).status).toBe(404);
+      expect(asked).toEqual(['other', 'missing']);
+    } finally {
+      other.close();
+      main.close();
+      await shutdown(server);
+    }
+  });
+
+  // A throw out of project() must not reach the browser as an open, silent SSE
+  // socket. Measured before the fix: subscribe() writes the 200 header first,
+  // so the handler's own error path cannot answer any more ("Cannot write
+  // headers after they are sent"), the rejection escapes the handler entirely
+  // and the client waits on a dead stream until it gives up.
+  it('answers a 500 when the snapshot throws, instead of a dead stream', async () => {
+    const failing = createStream(() => {
+      throw new Error('corrupt log row');
+    }, 50);
+    const server = createHttpServer({
+      permits,
+      outbox,
+      hooks: createHookHandlers({ store, permits }),
+      stream: failing,
+      state: () => emptyState(false),
+      readOnly: false,
+    });
+    const port = await listen(server, 0);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/stream`, { signal: AbortSignal.timeout(2000) });
+      expect(res.status).toBe(500);
+      expect(((await res.json()) as { message: string }).message).toBe('corrupt log row');
+    } finally {
+      failing.close();
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  });
+});
+
+describe('static web bundle', () => {
+  async function makeWebDist(): Promise<string> {
+    const webDist = await fs.mkdtemp(path.join(os.tmpdir(), 'dist-web-'));
+    await fs.writeFile(path.join(webDist, 'index.html'), '<!doctype html><title>console</title>');
+    await fs.mkdir(path.join(webDist, 'assets'));
+    await fs.writeFile(path.join(webDist, 'assets', 'index.js'), 'console.log(1)');
+    return webDist;
+  }
+
+  it('serves index.html at GET / and real files under /assets/*', async () => {
+    const webDist = await makeWebDist();
+    const { server, url } = await boot(false, webDist);
+    try {
+      const root = await fetch(`${url}/`);
+      expect(root.status).toBe(200);
+      expect(root.headers.get('content-type')).toContain('text/html');
+      expect(await root.text()).toContain('<title>console</title>');
+
+      const asset = await fetch(`${url}/assets/index.js`);
+      expect(asset.status).toBe(200);
+      expect(asset.headers.get('content-type')).toContain('javascript');
+      expect(await asset.text()).toBe('console.log(1)');
+    } finally {
+      await shutdown(server);
+      await fs.rm(webDist, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to index.html for an unmatched non-API GET, so client-side routes resolve', async () => {
+    const webDist = await makeWebDist();
+    const { server, url } = await boot(false, webDist);
+    try {
+      const res = await fetch(`${url}/wall?view=grid&agent=probe-bravo`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain('<title>console</title>');
+    } finally {
+      await shutdown(server);
+      await fs.rm(webDist, { recursive: true, force: true });
+    }
+  });
+
+  it('does not shadow /health, /hook or /api/* with the static bundle', async () => {
+    const webDist = await makeWebDist();
+    const { server, url } = await boot(false, webDist);
+    try {
+      const health = await fetch(`${url}/health`);
+      expect(health.headers.get('content-type')).toContain('application/json');
+      expect((await health.json()).ok).toBe(true);
+
+      const apiGet = await fetch(`${url}/api/agents/probe-alpha/message`);
+      expect(apiGet.status).toBe(404);
+      expect(apiGet.headers.get('content-type')).toContain('application/json');
+    } finally {
+      await shutdown(server);
+      await fs.rm(webDist, { recursive: true, force: true });
+    }
+  });
+
+  it('404s a missing asset without falling back to index.html', async () => {
+    const webDist = await makeWebDist();
+    const { server, url } = await boot(false, webDist);
+    try {
+      const res = await fetch(`${url}/assets/does-not-exist.js`);
+      expect(res.status).toBe(404);
+    } finally {
+      await shutdown(server);
+      await fs.rm(webDist, { recursive: true, force: true });
+    }
+  });
+
+  // C3 survived review because every case here injected `webDist`, so the
+  // default — the only value production ever uses — was never exercised.
+  it('resolves the default bundle from the module, not the cwd', async () => {
+    expect(DEFAULT_WEB_DIST).toBe(fileURLToPath(new URL('../../plugin/dist/web', import.meta.url)));
+
+    const assets = path.join(DEFAULT_WEB_DIST, 'assets');
+    const probe = path.join(assets, '__default-webdist-probe.js');
+    await fs.mkdir(assets, { recursive: true });
+    await fs.writeFile(probe, 'export const servedFromTheModule = true;\n');
+
+    // The launcher never cd's, so production runs from the Claude session's cwd.
+    const cwd = process.cwd();
+    process.chdir(os.tmpdir());
+    try {
+      const { server, url } = await boot(false);
+      try {
+        const res = await fetch(`${url}/assets/__default-webdist-probe.js`);
+        expect(res.status).toBe(200);
+        expect(await res.text()).toContain('servedFromTheModule');
+      } finally {
+        await shutdown(server);
+      }
+    } finally {
+      process.chdir(cwd);
+      await fs.rm(probe, { force: true });
+    }
+  });
+
+  it('returns an explanatory 503 instead of a bare 404 when dist/web is missing', async () => {
+    const missing = path.join(dir, 'no-such-dist-web');
+    const { server, url } = await boot(false, missing);
+    try {
+      const res = await fetch(`${url}/`);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual(NO_BUNDLE_BODY);
+    } finally {
+      await shutdown(server);
+    }
+  });
+});
+
+describe('control routes', () => {
+  it('POST /api/agents/:name/message writes the inbox and returns the msgId', async () => {
+    const { server, url } = await boot(false);
+    try {
+      const res = await fetch(`${url}/api/agents/probe-charlie/message`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'stand down', summary: 'stand down' }),
+      });
+      expect(res.status).toBe(200);
+      const { msgId } = (await res.json()) as { msgId: string };
+
+      const entries = JSON.parse(
+        await fs.readFile(path.join(dir, TEAM, 'inboxes', 'probe-charlie.json'), 'utf8'),
+      ) as InboxEntry[];
+      expect(entries).toHaveLength(1);
+      expect(entries[0].msg_id).toBe(msgId);
+      expect(entries[0].from).toBe('team-lead');
+      expect(entries[0].text).toBe('stand down');
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('sends to the lead under a sender that is not the lead itself', async () => {
+    const { server, url } = await boot(false);
+    try {
+      const res = await fetch(`${url}/api/agents/team-lead/message`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'from the console' }),
+      });
+      expect(res.status).toBe(200);
+
+      const entries = JSON.parse(
+        await fs.readFile(path.join(dir, TEAM, 'inboxes', 'team-lead.json'), 'utf8'),
+      ) as InboxEntry[];
+      // Stamped 'team-lead' this was a message from the lead to itself, which is
+      // what the operator's own message to the lead used to become.
+      expect(entries.at(-1)!.from).not.toBe('team-lead');
+      expect(entries.at(-1)!.text).toBe('from the console');
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('GET /api/outbox/:session serves the queue, makes the lead reachable, and routes its messages there', async () => {
+    const { server, url } = await boot(false);
+    try {
+      const session = state.leadSessionId;
+      const publishes = vi.spyOn(hub, 'publish');
+
+      const first = await fetch(`${url}/api/outbox/${session}`);
+      expect(first.status).toBe(200);
+      expect(await first.json()).toEqual({ messages: [] });
+      expect(outbox.reachable(session)).toBe(true);
+      // The first poll flips the frame's flag; a second one changes nothing.
+      expect(publishes).toHaveBeenCalledTimes(1);
+      await fetch(`${url}/api/outbox/${session}`);
+      expect(publishes).toHaveBeenCalledTimes(1);
+
+      const sent = await fetch(`${url}/api/agents/team-lead/message`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'from the console' }),
+      });
+      expect(sent.status).toBe(200);
+      const { msgId } = (await sent.json()) as { msgId: string };
+
+      const second = await fetch(`${url}/api/outbox/${session}`);
+      const { messages } = (await second.json()) as { messages: { id: string; text: string; ts: number }[] };
+      expect(messages.map((m) => [m.id, m.text])).toEqual([[msgId, 'from the console']]);
+      // The module delivers this one: nothing reached the inbox file.
+      await expect(fs.access(path.join(dir, TEAM, 'inboxes', 'team-lead.json'))).rejects.toThrow();
+
+      expect((await post(`${url}/api/outbox/${msgId}/ack`)).status).toBe(200);
+      expect(await (await fetch(`${url}/api/outbox/${session}`)).json()).toEqual({ messages: [] });
+      expect((await post(`${url}/api/outbox/${msgId}/ack`)).status).toBe(404);
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('GET /api/outbox/:session rejects a hostile segment and is not gated by read-only', async () => {
+    const { server, url } = await boot(true);
+    try {
+      expect((await fetch(`${url}/api/outbox/..%2F..%2Fetc%2Fpasswd`)).status).toBe(400);
+      expect((await fetch(`${url}/api/outbox/${state.leadSessionId}`)).status).toBe(200);
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('POST /api/plans/:requestId/approve writes a plan_approval_response frame', async () => {
+    const { server, url } = await boot(false);
+    try {
+      const res = await post(`${url}/api/plans/plan-1/approve`);
+      expect(res.status).toBe(200);
+      const entries = JSON.parse(
+        await fs.readFile(path.join(dir, TEAM, 'inboxes', 'probe-alpha.json'), 'utf8'),
+      ) as InboxEntry[];
+      const frame = JSON.parse(entries[0].text) as Record<string, unknown>;
+      expect(frame.type).toBe('plan_approval_response');
+      expect(frame.requestId).toBe('plan-1');
+      expect(frame.approved).toBe(true);
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('POST /api/plans/:requestId/reject carries the feedback', async () => {
+    const { server, url } = await boot(false);
+    try {
+      await fetch(`${url}/api/plans/plan-1/reject`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ feedback: 'do not drop migrations/legacy' }),
+      });
+      const entries = JSON.parse(
+        await fs.readFile(path.join(dir, TEAM, 'inboxes', 'probe-alpha.json'), 'utf8'),
+      ) as InboxEntry[];
+      const frame = JSON.parse(entries[0].text) as Record<string, unknown>;
+      expect(frame.approved).toBe(false);
+      expect(frame.feedback).toBe('do not drop migrations/legacy');
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('404s a plan id that is not on the needs-you strip', async () => {
+    const { server, url } = await boot(false);
+    try {
+      const res = await post(`${url}/api/plans/nope/approve`);
+      expect(res.status).toBe(404);
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it("404s a permission card's id on the plan route, and leaves the permit and inbox untouched", async () => {
+    const { server, url } = await boot(false);
+    try {
+      const held = permits.hold('probe-bravo', 'Bash', {}, 600_000);
+      state.needsYou = [
+        ...state.needsYou,
+        { id: held.id, kind: 'permission', agent: 'probe-bravo', reason: 'permission', detail: 'Bash' },
+      ];
+
+      const res = await post(`${url}/api/plans/${held.id}/approve`);
+      expect(res.status).toBe(404);
+      expect((await res.json()).message).toContain('permission');
+
+      // Still held — /approve must not have resolved it.
+      expect(permits.resolve(held.id, 'deny')).toBe(true);
+      await expect(fs.stat(path.join(dir, TEAM, 'inboxes', 'probe-bravo.json'))).rejects.toThrow();
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('POST /api/permits/:id/allow releases the held hook', async () => {
+    const { server, url } = await boot(false);
+    try {
+      const held = permits.hold('probe-bravo', 'Bash', {}, 600000);
+      const res = await post(`${url}/api/permits/${held.id}/allow`);
+      expect(res.status).toBe(200);
+      expect(await held.promise).toEqual({ decision: 'allow', reason: undefined });
+
+      const missing = await post(`${url}/api/permits/${held.id}/deny`);
+      expect(missing.status).toBe(404);
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('withdraws a held hook whose client disconnects before the console answers', async () => {
+    const { server, url } = await boot(false);
+    try {
+      const client = new AbortController();
+      const pending = fetch(`${url}/hook`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          hook_event_name: 'PermissionRequest',
+          tool_name: 'Bash',
+          tool_input: { command: 'ls' },
+          agent_id: 'aprobe-bravo-babf58016882bc72',
+          timeout: 600000,
+        }),
+        signal: client.signal,
+      }).catch(() => undefined);
+      await vi.waitFor(() => expect(permits.list()).toHaveLength(1));
+
+      client.abort();
+      await pending;
+
+      await vi.waitFor(() => expect(permits.list()).toEqual([]));
+      expect(store.replay().some((e) => e.kind === 'needsyou-resolved')).toBe(true);
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('POST /api/permits/:id/allow with answers resolves an AskUserQuestion with updatedInput', async () => {
+    const { server, url } = await boot(false);
+    try {
+      const input = { questions: [{ question: 'ship it?', header: 'Ship', options: [], multiSelect: false }] };
+      const held = permits.hold('probe-bravo', 'AskUserQuestion', input, 600000);
+      const res = await post(`${url}/api/permits/${held.id}/allow`, { answers: { 'ship it?': 'yes' } });
+      expect(res.status).toBe(200);
+      expect(await held.promise).toEqual({
+        decision: 'allow',
+        reason: undefined,
+        updatedInput: { ...input, answers: { 'ship it?': 'yes' } },
+      });
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('POST /api/permits/:id/allow drops answers with non-string values or unknown keys', async () => {
+    const { server, url } = await boot(false);
+    try {
+      const input = { questions: [{ question: 'ship it?', header: 'Ship', options: [], multiSelect: false }] };
+      const held = permits.hold('probe-bravo', 'AskUserQuestion', input, 600000);
+      const res = await post(`${url}/api/permits/${held.id}/allow`, {
+        answers: { 'ship it?': 42, 'not a question': 'yes' },
+      });
+      expect(res.status).toBe(200);
+      expect(await held.promise).toEqual({ decision: 'allow', reason: undefined });
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('POST /api/permits/:id/allow with no answers behaves as before for AskUserQuestion', async () => {
+    const { server, url } = await boot(false);
+    try {
+      const input = { questions: [{ question: 'ship it?', header: 'Ship', options: [], multiSelect: false }] };
+      const held = permits.hold('probe-bravo', 'AskUserQuestion', input, 600000);
+      const res = await post(`${url}/api/permits/${held.id}/allow`);
+      expect(res.status).toBe(200);
+      expect(await held.promise).toEqual({ decision: 'allow', reason: undefined });
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('POST /api/agents/:name/stop writes a shutdown_request frame', async () => {
+    const { server, url } = await boot(false);
+    try {
+      await post(`${url}/api/agents/probe-bravo/stop`);
+      const entries = JSON.parse(
+        await fs.readFile(path.join(dir, TEAM, 'inboxes', 'probe-bravo.json'), 'utf8'),
+      ) as InboxEntry[];
+      const frame = JSON.parse(entries[0].text) as Record<string, unknown>;
+      expect(frame.type).toBe('shutdown_request');
+      expect(frame.reason).toBe('stop');
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('POST /api/agents/:name/respawn asks the lead, not the dead teammate', async () => {
+    const { server, url } = await boot(false);
+    try {
+      await post(`${url}/api/agents/probe-charlie/respawn`);
+      const entries = JSON.parse(
+        await fs.readFile(path.join(dir, TEAM, 'inboxes', 'team-lead.json'), 'utf8'),
+      ) as InboxEntry[];
+      expect(entries[0].text).toContain('probe-charlie');
+      expect(entries[0].summary).toBe('respawn probe-charlie');
+    } finally {
+      await shutdown(server);
+    }
+  });
+});
+
+describe('GET /health', () => {
+  it('reports the build, the watch and how many tabs are open', async () => {
+    const { server, url } = await boot(false);
+    try {
+      state = {
+        ...state,
+        build: { version: '1.0.44', kind: 'installed', stale: false },
+        watching: { kind: 'session', id: 'abc-123' },
+      };
+
+      expect(await (await fetch(`${url}/health`)).json()).toEqual({
+        ok: true,
+        team: state.teamName,
+        agents: 0,
+        version: '1.0.44',
+        build: 'installed',
+        watching: { kind: 'session', id: 'abc-123' },
+        tabs: 0,
+      });
+    } finally {
+      await shutdown(server);
+    }
+  });
+});
+
+describe('POST /api/shutdown', () => {
+  it('answers before shutting down, which is the route spec §5.4 names', async () => {
+    const { server, url } = await boot(false);
+    try {
+      const res = await post(`${url}/api/shutdown`);
+      expect(res.status).toBe(200);
+      await new Promise((r) => setTimeout(r, 120));
+      expect(shutdowns).toBe(1);
+    } finally {
+      await shutdown(server);
+    }
+  });
+});
+
+describe('the team selector', () => {
+  it('no longer serves a listing — the frame carries it', async () => {
+    const { server, url } = await boot(false);
+    try {
+      expect((await fetch(`${url}/api/teams`)).status).toBe(404);
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('acks a switch without repeating the state the SSE frame already carries', async () => {
+    const { server, url } = await boot(false);
+    try {
+      const res = await post(`${url}/api/teams/session-b5129c7b/select`);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true, team: 'session-b5129c7b', changed: true });
+      expect(selectCalls).toEqual(['session-b5129c7b']);
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('answers 200 changed:false for the team already showing', async () => {
+    const { server, url } = await boot(false);
+    try {
+      selectOutcome = () => ({ ok: true, changed: false });
+      const res = await post(`${url}/api/teams/${TEAM}/select`);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true, team: TEAM, changed: false });
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('404s a team that is not there, unusable and absent alike', async () => {
+    const { server, url } = await boot(false);
+    try {
+      selectOutcome = () => ({ ok: false, reason: 'missing', message: 'no team session-nope0001' });
+      const res = await post(`${url}/api/teams/session-nope0001/select`);
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: 'not found', message: 'no team session-nope0001' });
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('409s the loser of a race rather than queueing it behind a team it changed its mind about', async () => {
+    const { server, url } = await boot(false);
+    try {
+      selectOutcome = () => ({ ok: false, reason: 'busy', message: 'a switch is already running' });
+      const res = await post(`${url}/api/teams/session-b5129c7b/select`);
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({
+        error: 'switch in progress',
+        message: 'a switch is already running',
+      });
+      // A different error field from READ_ONLY_BODY's, so the client can tell a
+      // busy console from a disabled one.
+      expect(await (await post(`${url}/api/teams/session-b5129c7b/select`)).json()).not.toEqual(
+        READ_ONLY_BODY,
+      );
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('acks a session select, and a session select alone — it is not a team switch', async () => {
+    const { server, url } = await boot(false);
+    try {
+      const res = await post(`${url}/api/select-session/8f2a1c00-3206-455b-aaf6-a5a81ad1e283`);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        ok: true,
+        session: '8f2a1c00-3206-455b-aaf6-a5a81ad1e283',
+        changed: true,
+      });
+      expect(sessionCalls).toEqual(['8f2a1c00-3206-455b-aaf6-a5a81ad1e283']);
+      expect(selectCalls).toEqual([]);
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('404s a session with nothing on disk behind it, and 409s a switch already running', async () => {
+    const { server, url } = await boot(false);
+    try {
+      sessionOutcome = () => ({ ok: false, reason: 'missing', message: 'no session nope' });
+      const missing = await post(`${url}/api/select-session/nope`);
+      expect(missing.status).toBe(404);
+      expect(await missing.json()).toEqual({ error: 'not found', message: 'no session nope' });
+
+      sessionOutcome = () => ({ ok: false, reason: 'busy', message: 'a switch is already running' });
+      const busy = await post(`${url}/api/select-session/nope`);
+      expect(busy.status).toBe(409);
+      expect(await busy.json()).toEqual({
+        error: 'switch in progress',
+        message: 'a switch is already running',
+      });
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  // The same gate the team route gets: the id is percent-decoded after the
+  // pattern, so a smuggled separator has to die before selectSession is called.
+  it('rejects a hostile session segment before calling anything', async () => {
+    const { server, url } = await boot(false);
+    try {
+      for (const hostile of ['%2e%2e%2f', '%zz', 'has%20space']) {
+        const res = await post(`${url}/api/select-session/${hostile}`);
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual(BAD_SEGMENT_BODY);
+      }
+      expect(sessionCalls).toEqual([]);
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('rejects a name that would smuggle a separator past the guard, before calling anything', async () => {
+    const { server, url } = await boot(false);
+    try {
+      for (const hostile of ['%2e%2e%2f', '%zz', 'has%20space']) {
+        const res = await post(`${url}/api/teams/${hostile}/select`);
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual(BAD_SEGMENT_BODY);
+      }
+      expect(selectCalls).toEqual([]);
+    } finally {
+      await shutdown(server);
+    }
+  });
+});
+
+describe('--read-only', () => {
+  it('409s every control route with an explanatory body', async () => {
+    const { server, url } = await boot(true);
+    try {
+      const routes: Array<[string, unknown]> = [
+        ['/api/agents/probe-alpha/message', { text: 'hi' }],
+        ['/api/plans/plan-1/approve', {}],
+        ['/api/plans/plan-1/reject', { feedback: 'no' }],
+        ['/api/permits/x/allow', {}],
+        ['/api/agents/probe-alpha/interrupt', {}],
+        ['/api/agents/probe-alpha/stop', {}],
+        ['/api/agents/probe-alpha/respawn', {}],
+        ['/api/shutdown', {}],
+      ];
+      for (const [route, body] of routes) {
+        const res = await fetch(url + route, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        expect(res.status).toBe(409);
+        expect(await res.json()).toEqual(READ_ONLY_BODY);
+      }
+      await expect(fs.stat(path.join(dir, TEAM, 'inboxes', 'probe-alpha.json'))).rejects.toThrow();
+      expect(shutdowns).toBe(0);
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('still switches — a switch changes what is watched, not ~/.claude', async () => {
+    const { server, url } = await boot(true);
+    try {
+      const res = await post(`${url}/api/teams/session-b5129c7b/select`);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true, team: 'session-b5129c7b', changed: true });
+      expect(selectCalls).toEqual(['session-b5129c7b']);
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('still retargets at a session — that is observation, not a write', async () => {
+    const { server, url } = await boot(true);
+    try {
+      const res = await post(`${url}/api/select-session/8f2a1c00-3206-455b-aaf6-a5a81ad1e283`);
+      expect(res.status).toBe(200);
+      expect(sessionCalls).toEqual(['8f2a1c00-3206-455b-aaf6-a5a81ad1e283']);
+    } finally {
+      await shutdown(server);
+    }
+  });
+
+  it('leaves the observer routes working', async () => {
+    const { server, url } = await boot(true);
+    try {
+      const res = await fetch(`${url}/hook`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash' }),
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({});
+      expect(store.replay().filter((e) => e.kind === 'hook')).toHaveLength(1);
+    } finally {
+      await shutdown(server);
+    }
+  });
+});
+
+describe('GET /api/plan-task', () => {
+  let server: Server;
+  let url: string;
+
+  beforeEach(async () => {
+    ({ server, url } = await boot(false));
+  });
+  afterEach(() => shutdown(server));
+
+  it('serves one task\'s section of the plan', async () => {
+    planTasks[2] = '### Task 2: Serve it\n\n- [ ] **Step 1: Serve**';
+    const res = await fetch(`${url}/api/plan-task?n=2`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ n: 2, text: planTasks[2] });
+  });
+
+  it('requires a task number', async () => {
+    expect((await fetch(`${url}/api/plan-task`)).status).toBe(400);
+    expect((await fetch(`${url}/api/plan-task?n=two`)).status).toBe(400);
+  });
+
+  it('404s when there is no plan or no such task', async () => {
+    expect((await fetch(`${url}/api/plan-task?n=9`)).status).toBe(404);
+  });
+});
+
+describe('GET /api/line', () => {
+  let server: Server;
+  let url: string;
+
+  beforeEach(async () => {
+    ({ server, url } = await boot(false));
+  });
+  afterEach(() => shutdown(server));
+
+  it('serves the uncapped text for one expanded row', async () => {
+    const full = 'y'.repeat(5000);
+    lineTexts['probe-alpha|rec-1#0'] = full;
+    const res = await fetch(`${url}/api/line?agent=probe-alpha&id=rec-1%230`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ id: 'rec-1#0', text: full });
+  });
+
+  it('requires both agent and id', async () => {
+    expect((await fetch(`${url}/api/line?id=rec-1%230`)).status).toBe(400);
+    expect((await fetch(`${url}/api/line?agent=probe-alpha`)).status).toBe(400);
+  });
+
+  // The store keeps a bounded number of records per agent, so a row on screen
+  // can outlive the record behind it. The drawer keeps its capped text.
+  it('404s a row whose record the store no longer holds', async () => {
+    const res = await fetch(`${url}/api/line?agent=probe-alpha&id=gone%230`);
+    expect(res.status).toBe(404);
+  });
+
+  // A read-only console is still allowed to READ; only the control routes close.
+  it('answers on a read-only console too', async () => {
+    await shutdown(server);
+    ({ server, url } = await boot(true));
+    lineTexts['probe-alpha|rec-1#0'] = 'visible';
+    const res = await fetch(`${url}/api/line?agent=probe-alpha&id=rec-1%230`);
+    expect(res.status).toBe(200);
+    expect((await res.json()).text).toBe('visible');
+  });
+});
+
+describe('GET /api/workflow/:runId/script', () => {
+  let server: Server;
+  let url: string;
+
+  beforeEach(async () => {
+    ({ server, url } = await boot(false));
+  });
+  afterEach(() => shutdown(server));
+
+  it('serves the source the frame is too small to carry, and says which copy it is', async () => {
+    workflowScripts['wf_3c49ecab-c51'] = {
+      source: 'as-executed',
+      path: '/s/workflows/scripts/deep-research-wf_3c49ecab-c51.js',
+      script: '// as executed',
+    };
+    const res = await fetch(`${url}/api/workflow/wf_3c49ecab-c51/script`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      runId: 'wf_3c49ecab-c51',
+      source: 'as-executed',
+      path: '/s/workflows/scripts/deep-research-wf_3c49ecab-c51.js',
+      script: '// as executed',
+    });
+  });
+
+  it('404s a run whose source is on neither disk path', async () => {
+    const res = await fetch(`${url}/api/workflow/wf_3c49ecab-c51/script`);
+    expect(res.status).toBe(404);
+  });
+
+  // The id names a file. `%2F` would smuggle a separator past a pattern that
+  // only excludes a literal one, so the decoded segment is allowlisted before
+  // the resolver — which is the second gate — is called at all.
+  it('rejects an id that is not a bare segment without asking the resolver', async () => {
+    for (const hostile of ['..%2F..%2Fetc%2Fpasswd', 'wf_x%2F..%2F..', 'wf%00x', 'a%zz']) {
+      const res = await fetch(`${url}/api/workflow/${hostile}/script`);
+      expect(res.status).toBe(400);
+    }
+    expect(scriptCalls).toEqual([]);
+  });
+
+  it('stays readable with --read-only: it reads a file, it writes nothing', async () => {
+    await shutdown(server);
+    ({ server, url } = await boot(true));
+    workflowScripts['wf_3c49ecab-c51'] = { source: 'snapshot', path: '/s/w/x.json', script: 'x' };
+    const res = await fetch(`${url}/api/workflow/wf_3c49ecab-c51/script`);
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('POST /api/sessions/:id/brief', () => {
+  let server: Server;
+  let url: string;
+
+  beforeEach(async () => {
+    ({ server, url } = await boot(false));
+  });
+  afterEach(() => shutdown(server));
+
+  it('returns the brief the overview panel draws', async () => {
+    const res = await post(`${url}/api/sessions/${state.leadSessionId}/brief`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ model: 'claude-haiku-4-5', pending: false });
+    expect(briefCalls).toEqual([state.leadSessionId]);
+  });
+
+  // One session is on screen and its state is all this console holds; a brief
+  // for another would be written from nothing.
+  it('404s a session this console is not showing', async () => {
+    const res = await post(`${url}/api/sessions/some-other-session/brief`);
+    expect(res.status).toBe(404);
+  });
+
+  it('rejects an id that is not a bare segment without asking the generator', async () => {
+    for (const hostile of ['..%2F..%2Fetc%2Fpasswd', 'x%00y']) {
+      const res = await post(`${url}/api/sessions/${hostile}/brief`);
+      expect(res.status).toBe(400);
+    }
+    expect(briefCalls).toEqual([]);
+  });
+
+  // The brief is the one call the console makes that spends money, so it sits
+  // below the read-only gate with the other control writes.
+  it('is refused with --read-only', async () => {
+    await shutdown(server);
+    ({ server, url } = await boot(true));
+    const res = await post(`${url}/api/sessions/${state.leadSessionId}/brief`);
+    expect(res.status).toBe(409);
+    expect(briefCalls).toEqual([]);
+  });
+});
