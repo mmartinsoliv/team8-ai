@@ -1739,7 +1739,7 @@ function takeDeliverable(entries, to) {
   return { take, left };
 }
 function contextFor(delivered, left) {
-  const lines = ["Messages that reached you mid-turn (team8 delivered them early; they will not repeat at the end of your turn):", ...delivered.map(frame)];
+  const lines = ["Messages that reached you mid-turn (team8-ai delivered them early; they will not repeat at the end of your turn):", ...delivered.map(frame)];
   if (left) lines.push(`${left} more message${left === 1 ? "" : "s"} will arrive when your turn ends.`);
   return lines.join("\n");
 }

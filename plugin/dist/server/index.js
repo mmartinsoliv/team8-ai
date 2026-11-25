@@ -2214,7 +2214,7 @@ function sectionOf(text, n) {
 }
 
 // src/server/plan.ts
-var PLAN_PATH = /\/docs\/team8\/plans\/[^/]+\.md$/;
+var PLAN_PATH = /\/docs\/team8-ai\/plans\/[^/]+\.md$/;
 function planWriteOf(rec) {
   const content = rec.message?.content;
   if (!Array.isArray(content)) return void 0;
@@ -5066,7 +5066,7 @@ function createHookHandlers(deps) {
               body: {
                 hookSpecificOutput: {
                   hookEventName: "PostToolUse",
-                  additionalContext: `team8: Task ${stalled.id} has been at ${progress}% for over two minutes. If a step of your plan has landed since, TaskUpdate its metadata.progress to round(100 \xD7 steps done \xF7 steps); otherwise carry on.`
+                  additionalContext: `team8-ai: Task ${stalled.id} has been at ${progress}% for over two minutes. If a step of your plan has landed since, TaskUpdate its metadata.progress to round(100 \xD7 steps done \xF7 steps); otherwise carry on.`
                 }
               }
             };
@@ -6019,7 +6019,7 @@ async function installedVersion(claudeHome) {
   );
   let newest;
   for (const [key2, installs] of Object.entries(doc?.plugins ?? {})) {
-    if (!key2.startsWith("team8@") || !Array.isArray(installs)) continue;
+    if (!key2.startsWith("team8-ai@") || !Array.isArray(installs)) continue;
     for (const install of installs) {
       const v = install?.version;
       if (typeof v === "string" && (newest === void 0 || isOlderBuild(newest, v))) newest = v;
@@ -6080,9 +6080,9 @@ var LAUNCH_HOOK_TIMEOUT_SECONDS = 5;
 var TASK_GATE_SCRIPT = path11.join(PLUGIN_DIR, "bin", "task-gate.sh");
 var AGENT_GATE_SCRIPT = path11.join(PLUGIN_DIR, "bin", "agent-gate.sh");
 var INBOX_DELIVER_SCRIPT = path11.join(PLUGIN_DIR, "dist", "hooks", "inbox-deliver.js");
-var BACKUP_FILE = "team8.backup.json";
+var BACKUP_FILE = "team8-ai.backup.json";
 var SUBAGENT_PROMPT_CACHE_TTL = "1h";
-var MODEL_FORCE_WARNING = "CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 overrides every per-task model team8 assigns";
+var MODEL_FORCE_WARNING = "CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 overrides every per-task model team8-ai assigns";
 var AGENT_ENV_VARS = [
   "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
   "CLAUDE_CODE_ENABLE_TODO_TOOLS"
@@ -6772,7 +6772,7 @@ var clock = (t) => new Date(t).toTimeString().slice(0, 5);
 var NOT_TOOLS = /* @__PURE__ */ new Set(["model", "idle", "gap", "asleep"]);
 var IDLE_ROW_MIN_MS = 6e4;
 function renderMarkdown(r) {
-  const out = [`# team8 measure: session ${r.sessionId}`, ""];
+  const out = [`# team8-ai measure: session ${r.sessionId}`, ""];
   if (r.since !== void 0) out.push(`Since ${new Date(r.since).toISOString()}.`, "");
   out.push(
     "## Agents",
@@ -6901,7 +6901,7 @@ function parseArgs(argv) {
     confirm,
     claudeHome,
     settingsPath: path13.join(claudeHome, "settings.json"),
-    dbPath: path13.join(claudeHome, "team8", "events.db"),
+    dbPath: path13.join(claudeHome, "team8-ai", "events.db"),
     team,
     session,
     cwd,
@@ -7003,7 +7003,7 @@ function lastCwds(buf, slug) {
 }
 var DECIDED_MODE = /mode: (subagents|teammates|workflow) —/g;
 function lastDecidedMode(buf) {
-  const marker = "docs/team8/runs/";
+  const marker = "docs/team8-ai/runs/";
   let at = buf.lastIndexOf(marker);
   while (at >= 0) {
     const start = buf.lastIndexOf(10, at) + 1;
@@ -7915,7 +7915,7 @@ async function main(argv) {
     },
     onShutdown: stop
   }));
-  console.log(`team8 on http://127.0.0.1:${port}${cli.readOnly ? " (read-only)" : ""}`);
+  console.log(`team8-ai on http://127.0.0.1:${port}${cli.readOnly ? " (read-only)" : ""}`);
   let idleTicks = 0;
   const followRealTeam = async () => {
     if (switching) return;
