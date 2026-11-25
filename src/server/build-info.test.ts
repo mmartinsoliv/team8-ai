@@ -51,8 +51,8 @@ describe('installedVersion', () => {
     await writeJson(path.join(home, 'plugins', 'installed_plugins.json'), {
       plugins: {
         'team8-ai@team8-ai': [{ version: '1.0.41' }],
-        'team8-ai@grimoire': [{ version: '1.0.43' }],
-        'other@grimoire': [{ version: '9.9.9' }],
+        'team8-ai@marketplace': [{ version: '1.0.43' }],
+        'other@marketplace': [{ version: '9.9.9' }],
       },
     });
 
@@ -66,10 +66,10 @@ describe('installedVersion', () => {
 
 describe('readBuildInfo', () => {
   it('reads an installed build and marks it stale when a newer one is installed', async () => {
-    const root = path.join(home, 'plugins', 'cache', 'grimoire', 'team8-ai', '1.0.42');
+    const root = path.join(home, 'plugins', 'cache', 'marketplace', 'team8-ai', '1.0.42');
     await writeJson(path.join(root, '.claude-plugin', 'plugin.json'), { version: '1.0.42' });
     await writeJson(path.join(home, 'plugins', 'installed_plugins.json'), {
-      plugins: { 'team8-ai@grimoire': [{ version: '1.0.43' }] },
+      plugins: { 'team8-ai@marketplace': [{ version: '1.0.43' }] },
     });
 
     expect(await readBuildInfo(path.join(root, 'dist', 'server', 'index.js'), home)).toEqual({
@@ -87,7 +87,7 @@ describe('readBuildInfo', () => {
     await fs.writeFile(path.join(repo, '.git', 'HEAD'), 'ref: refs/heads/main\n');
     await fs.writeFile(path.join(repo, '.git', 'refs', 'heads', 'main'), '0123456789abcdef0123456789abcdef01234567\n');
     await writeJson(path.join(home, 'plugins', 'installed_plugins.json'), {
-      plugins: { 'team8-ai@grimoire': [{ version: '1.0.99' }] },
+      plugins: { 'team8-ai@marketplace': [{ version: '1.0.99' }] },
     });
 
     const info = await readBuildInfo(path.join(repo, 'src', 'server', 'index.ts'), home);

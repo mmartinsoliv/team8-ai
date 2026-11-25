@@ -18,8 +18,7 @@ Phase 1 is not a code change: no branch, no commit, no PR. Its terminal
 deliverable is a file in the session scratchpad.
 
 **REQUIRED SUB-SKILLS:** `team8-ai:tasks` for the task contract, `team8-ai:run` for
-dispatch and roster checks, `grimoire:alanizer` for every comment body,
-`grimoire:review-as-me` for Conventional Comments and the posting mechanics.
+dispatch and roster checks. Comment bodies follow Conventional Comments.
 
 ## Phase 1: review into files
 
@@ -37,9 +36,9 @@ dispatch and roster checks, `grimoire:alanizer` for every comment body,
 3. **One teammate per PR**, dispatched in a single message with the seven-part
    contract from `team8-ai:run`. Part 6 reads: "Terminal deliverable: the report
    file. No branch, no commit, no PR." Part 5 reads: "`test -s <report> && head -40 <report>`,
-   then `ALANIZED=1 gh api repos/<o>/<r>/pulls/<n> --jq '[.comments, .review_comments]'`
-   to confirm nothing of yours reached the PR." `ALANIZED=1` is fine on any
-   read; only the POSTs in step 8 wait for the pickers.
+   then `gh api repos/<o>/<r>/pulls/<n> --jq '[.comments, .review_comments]'`
+   to confirm nothing of yours reached the PR." Only the POSTs in step 8
+   wait for the pickers.
    Verify the roster in `~/.claude/teams/<team>/config.json` right after.
 4. **Lead loop while they run.** Relay one line per finished PR: recommendation,
    finding count, headline. The `code-review` skill's own sub-agent reports to
@@ -58,15 +57,13 @@ dispatch and roster checks, `grimoire:alanizer` for every comment body,
    context line on the RIGHT side of a hunk, verified against the per-file patch
    from `gh api repos/<o>/<r>/pulls/<n>/files`; a finding with no diff line goes
    to `unanchored`; one comment per line, fold same-line findings; body is a plain
-   Conventional Comments label then text; read both alanizer reference files
-   before writing; validate with `jq`. File `<report>.comments.json`:
+   Conventional Comments label then text; validate with `jq`. File `<report>.comments.json`:
    ```json
    {"pr":"<url>","recommendation":"approve-with-nits",
     "comments":[{"path":"...","line":123,"side":"RIGHT","body":"..."}],
     "unanchored":[{"body":"..."}]}
    ```
-7. **Pick one PR at a time**, the way `grimoire:review-as-me` steps 7 and 8
-   do. Print that PR's bodies verbatim, numbered from 1, unanchored items last,
+7. **Pick one PR at a time**, so the user reads every body before it goes out. Print that PR's bodies verbatim, numbered from 1, unanchored items last,
    then ask with `AskUserQuestion`:
    - **Items:** `multiSelect: true`, header `#<n>` (12 chars max), label
      `#k path:line` (`#k review body` when unanchored), the full body as
@@ -82,13 +79,13 @@ dispatch and roster checks, `grimoire:alanizer` for every comment body,
      call has a free slot, else in its own call.
 8. **Post** the PRs with an event. `review.json` holds `comments` = the picked
    anchored items and `body` = the picked unanchored bodies joined by blank
-   lines; `Request changes` with an empty body gets one alanized line pointing
+   lines; `Request changes` with an empty body gets one line pointing
    at the blocking comment. Never include `event` in this POST: that submits
    immediately and skips the count check.
    ```bash
-   ALANIZED=1 gh api repos/<o>/<r>/pulls/<n>/reviews -X POST --input review.json --jq '"\(.state) id=\(.id) \(.html_url)"'
-   ALANIZED=1 gh api repos/<o>/<r>/pulls/<n>/reviews/<id>/comments --jq length
-   ALANIZED=1 gh api repos/<o>/<r>/pulls/<n>/reviews/<id>/events -X POST -f event=<EVENT>
+   gh api repos/<o>/<r>/pulls/<n>/reviews -X POST --input review.json --jq '"\(.state) id=\(.id) \(.html_url)"'
+   gh api repos/<o>/<r>/pulls/<n>/reviews/<id>/comments --jq length
+   gh api repos/<o>/<r>/pulls/<n>/reviews/<id>/events -X POST -f event=<EVENT>
    ```
    The second line must equal the picked anchored count; stop before the third
    if it doesn't. With nothing picked, `Approve` POSTs `{"event":"APPROVE"}`
@@ -97,7 +94,7 @@ dispatch and roster checks, `grimoire:alanizer` for every comment body,
    teammate the picked numbers: `git fetch origin <head>` in the local clone of
    `<o>/<r>` (else `gh repo clone` it into the scratchpad), then
    `git worktree add --detach <scratchpad>/wt/<repo>-<n> origin/<head>`; apply
-   each item, run the repo's checks, commit by path with an alanized message and
+   each item, run the repo's checks, commit by path in the repo's commit style and
    no attribution, `git push origin HEAD:<head>`, reply with the SHAs. Nothing
    is posted on the PR. In a stack each teammate pushes only its own head; the
    PRs above pick the fix up when the user restacks.
@@ -108,7 +105,6 @@ dispatch and roster checks, `grimoire:alanizer` for every comment body,
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Hook blocks a read-only `gh` call | The PR-post hook matches the substrings `comments` and `reviews` | Prefix `ALANIZED=1` as the first token. Reads any time; writes only after the pickers |
 | Teammate says the code-review skill never returned | Its sub-agent result went to the lead | Forward it to the teammate (step 4) |
 | Review is live the moment it is posted | `event` was in the POST body | Post without `event`, submit in step 8 |
 | 422 `Can not approve your own pull request` | An event on a PR the user authored | Own PRs get no event question and are fixed in step 9 |
