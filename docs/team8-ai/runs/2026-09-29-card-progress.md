@@ -3,7 +3,7 @@
 spec: none (bounded, design approved in chat)
 plan: none
 branch: card-progress
-pr: https://github.com/alan-oliv/team8-ai/pull/33
+pr: https://github.com/alan-oliv/team8/pull/33
 
 ## Brainstorm
 - path: bounded

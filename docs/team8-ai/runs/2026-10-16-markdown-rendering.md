@@ -3,7 +3,7 @@
 spec: none — bounded path, design approved in chat (tables, then "everything": links, strike, italic, blockquotes, rules, nested and checkbox items)
 plan: docs/team8-ai/plans/2026-10-16-markdown-rendering.md
 branch: render-improvements
-pr: https://github.com/alan-oliv/team8-ai/pull/48
+pr: https://github.com/alan-oliv/team8/pull/48
 
 ## Brainstorm
 - path: bounded

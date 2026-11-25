@@ -3,7 +3,7 @@
 spec: docs/team8-ai/specs/2026-10-15-session-picker-live-only-design.md
 plan: docs/team8-ai/plans/2026-10-15-session-picker-live-only.md
 branch: session-picker-live-only
-pr: https://github.com/alan-oliv/team8-ai/pull/45
+pr: https://github.com/alan-oliv/team8/pull/45
 
 ## Brainstorm
 - path: architectural
