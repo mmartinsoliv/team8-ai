@@ -198,7 +198,7 @@ describe('discoverTeam', () => {
     const found = (await discoverTeam(teams(), sessions()))!;
     expect(found.teamName).toBe('session-98b0b4a7');
     expect(found.leadSessionId).toBe('98b0b4a7-3206-455b-aaf6-a5a81ad1e283');
-    expect(found.projectSlug).toBe('-Users-alanoliv-code-team8-ai');
+    expect(found.projectSlug).toBe('-Users-me-code-team8-ai');
   });
 
   it('prefers a >=2-member team over a newer lead-only one — a lead-only team is not a team', async () => {
@@ -695,15 +695,15 @@ describe('sessionProjectDir', () => {
   }
 
   it('resolves the directory from the cwd the session record carries', async () => {
-    const target = await makeSession('-Users-alanoliv-code-team8-ai');
-    expect(await sessionProjectDir(path.join(dir, 'projects'), SESSION, '/Users/alanoliv/code/team8-ai'))
+    const target = await makeSession('-Users-me-code-team8-ai');
+    expect(await sessionProjectDir(path.join(dir, 'projects'), SESSION, '/Users/me/code/team8-ai'))
       .toBe(target);
   });
 
   // The whole point of the fallback: a session that never formed a team is
   // exactly the one whose sessions/<id>.json is most likely missing.
   it('finds it by scanning when there is no session record to name a cwd', async () => {
-    const target = await makeSession('-Users-alanoliv-code-other');
+    const target = await makeSession('-Users-me-code-other');
     expect(await sessionProjectDir(path.join(dir, 'projects'), SESSION)).toBe(target);
   });
 
@@ -711,7 +711,7 @@ describe('sessionProjectDir', () => {
   // transcript beside the slug, never a directory. Requiring the directory made
   // `/api/select-session` 404 for exactly the sessions the route serves.
   it('accepts a session that has only its transcript file, with no directory yet', async () => {
-    const slug = '-Users-alanoliv-code-team8-ai';
+    const slug = '-Users-me-code-team8-ai';
     await fs.mkdir(path.join(dir, 'projects', slug), { recursive: true });
     await fs.writeFile(path.join(dir, 'projects', slug, `${SESSION}.jsonl`), '{}\n');
     expect(await sessionProjectDir(path.join(dir, 'projects'), SESSION)).toBe(
@@ -720,7 +720,7 @@ describe('sessionProjectDir', () => {
   });
 
   it('is null for a session with nothing on disk, and for no projects root at all', async () => {
-    await makeSession('-Users-alanoliv-code-team8-ai');
+    await makeSession('-Users-me-code-team8-ai');
     expect(await sessionProjectDir(path.join(dir, 'projects'), 'not-a-session')).toBeNull();
     expect(await sessionProjectDir(path.join(dir, 'nowhere'), SESSION)).toBeNull();
   });
@@ -728,7 +728,7 @@ describe('sessionProjectDir', () => {
   // A stale cwd must not shadow the real directory — the session moved, the
   // transcript did not.
   it('falls back to the scan when the recorded cwd points nowhere', async () => {
-    const target = await makeSession('-Users-alanoliv-code-other');
+    const target = await makeSession('-Users-me-code-other');
     expect(await sessionProjectDir(path.join(dir, 'projects'), SESSION, '/gone')).toBe(target);
   });
 });

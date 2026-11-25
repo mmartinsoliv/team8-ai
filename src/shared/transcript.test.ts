@@ -449,16 +449,16 @@ describe('structure worth expanding', () => {
   });
 
   it('drops a leading cd into the project, which was 43 of the 47 visible characters', () => {
-    expect(shown(bash('cd /Users/alanoliv/code/team8-ai; npm test'))).toBe('Bash(npm test)');
+    expect(shown(bash('cd /Users/me/code/team8-ai; npm test'))).toBe('Bash(npm test)');
     expect(shown(bash('cd /repo && git log --oneline'))).toBe('Bash(git log --oneline)');
     // A newline separates them as often as `;` does — every multi-line command
     // this project writes opens that way.
-    expect(shown(bash('cd /Users/alanoliv/code/team8-ai\nnpm test'))).toBe('Bash(npm test)');
+    expect(shown(bash('cd /Users/me/code/team8-ai\nnpm test'))).toBe('Bash(npm test)');
   });
 
   it('renders two commands that share that prefix differently — the whole point', () => {
-    const a = shown(bash('cd /Users/alanoliv/code/team8-ai; git log --oneline'));
-    const b = shown(bash('cd /Users/alanoliv/code/team8-ai; npx vite build'));
+    const a = shown(bash('cd /Users/me/code/team8-ai; git log --oneline'));
+    const b = shown(bash('cd /Users/me/code/team8-ai; npx vite build'));
     // Both used to open with the same 43 characters, so a 47-char Wall column
     // showed two characters of difference. The command has to lead.
     expect(a.startsWith('Bash(cd ')).toBe(false);

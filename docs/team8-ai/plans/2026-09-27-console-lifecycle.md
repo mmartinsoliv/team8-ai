@@ -351,7 +351,7 @@ git commit -m "Resolve a session's team through its /branch ancestors, on direct
   - `TeamState.watching?: Watching` on every published frame.
   - Inside `main()`: `let watching: Watching` and `const watch = (next: Watching): void` — the only way the watch changes. Task 4 adds the record write inside `watch`.
 
-Background: in `main()`, `currentTeam` and `currentSession` record what is **shown** (the ingest's `onTeam` updates `currentTeam` on its own) and stay. `pinned` goes: `watching` says what the operator asked for, and the follower moves what is shown toward it. This task also fixes study item F3: `followRealTeam` writes `leadFacts` before its generation check, so a tick that started before a switch paints the old team's branch onto the new one. The wiring test for it only failed on the author's machine, because `fixtures/config-4-members.json` sets team A's cwd to `/Users/alanoliv/code/team8-ai` and `branchOf` reads that checkout's real `.git/HEAD`.
+Background: in `main()`, `currentTeam` and `currentSession` record what is **shown** (the ingest's `onTeam` updates `currentTeam` on its own) and stay. `pinned` goes: `watching` says what the operator asked for, and the follower moves what is shown toward it. This task also fixes study item F3: `followRealTeam` writes `leadFacts` before its generation check, so a tick that started before a switch paints the old team's branch onto the new one. The wiring test for it only failed on the author's machine, because `fixtures/config-4-members.json` sets team A's cwd to `/Users/me/code/team8-ai` and `branchOf` reads that checkout's real `.git/HEAD`.
 
 - [ ] **Step 1: Make the F3 test fail on every machine**
 

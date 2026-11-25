@@ -281,7 +281,7 @@ Write `$TMPDIR/t8-mod-tsc/tsconfig.json` (outside the repo):
   },
   "files": [
     "/private/tmp/claude-501/bundled-skills/2.1.296/c3d87902c5a706a9ab345b22d099d643/plugin-authoring/types/claude-code.d.ts",
-    "/Users/alanoliv/code/team8-ai/plugin/hooks/wave-notify.ts"
+    "/Users/me/code/team8-ai/plugin/hooks/wave-notify.ts"
   ]
 }
 ```

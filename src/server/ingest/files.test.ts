@@ -22,7 +22,7 @@ import type { Agent, WorkflowRun } from '../../shared/domain';
 import type { RosterPayload, TranscriptPayload, TaskPayload, MailPayload } from '../project';
 
 const FIXTURES = path.resolve(process.cwd(), 'fixtures');
-const SLUG = '-Users-alanoliv-code-team8-ai';
+const SLUG = '-Users-me-code-team8-ai';
 const TEAM = 'session-98b0b4a7';
 const LEAD_SESSION = '98b0b4a7-3206-455b-aaf6-a5a81ad1e283';
 
@@ -167,7 +167,7 @@ describe('agentOfTranscript with a lead session CHAIN', () => {
 
 describe('scope rule: agent teams only', () => {
   const LEAD = '98b0b4a7-3206-455b-aaf6-a5a81ad1e283';
-  const base = `/Users/alanoliv/.claude/projects/${SLUG}`;
+  const base = `/Users/me/.claude/projects/${SLUG}`;
 
   it('attributes a real teammate transcript under the lead session', () => {
     const f = `${base}/${LEAD}/subagents/agent-aprobe-alpha-84fd551b27de6433.jsonl`;

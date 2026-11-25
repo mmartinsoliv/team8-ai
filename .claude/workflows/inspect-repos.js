@@ -8,11 +8,11 @@ export const meta = {
 }
 
 const REPOS = Array.isArray(args) && args.length ? args : [
-  '/Users/alanoliv/code/team8-ai',
-  '/Users/alanoliv/code/agents-team-ui-docs',
-  '/Users/alanoliv/code/ai-script-builder',
-  '/Users/alanoliv/code/grimoire',
-  '/Users/alanoliv/code/stable-diffusion-webui',
+  '/Users/me/code/team8-ai',
+  '/Users/me/code/agents-team-ui-docs',
+  '/Users/me/code/ai-script-builder',
+  '/Users/me/code/grimoire',
+  '/Users/me/code/stable-diffusion-webui',
 ]
 
 const SUMMARY_SCHEMA = {

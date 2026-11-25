@@ -8,14 +8,14 @@ export const meta = {
   ],
 }
 
-const OUT = '/Users/alanoliv/code/agents-team-ui-docs/REPO-ROAST.md'
+const OUT = '/Users/me/code/agents-team-ui-docs/REPO-ROAST.md'
 
 const REPOS = (Array.isArray(args) && args.length ? args : [
-  { path: '/Users/alanoliv/code/old/battle', model: 'sonnet', effort: 'medium' },
-  { path: '/Users/alanoliv/code/old/ai-script-builder', model: 'sonnet', effort: 'medium' },
-  { path: '/Users/alanoliv/code/old/github-contrib-chart', model: 'haiku', effort: 'low' },
-  { path: '/Users/alanoliv/code/old/hometask-be-template-master copy', model: 'haiku', effort: 'low' },
-  { path: '/Users/alanoliv/code/old/archie-poc', model: 'sonnet', effort: 'medium' },
+  { path: '/Users/me/code/old/battle', model: 'sonnet', effort: 'medium' },
+  { path: '/Users/me/code/old/ai-script-builder', model: 'sonnet', effort: 'medium' },
+  { path: '/Users/me/code/old/github-contrib-chart', model: 'haiku', effort: 'low' },
+  { path: '/Users/me/code/old/hometask-be-template-master copy', model: 'haiku', effort: 'low' },
+  { path: '/Users/me/code/old/archie-poc', model: 'sonnet', effort: 'medium' },
 ]).map((r) => (typeof r === 'string' ? { path: r, model: 'sonnet', effort: 'medium' } : r))
 
 const ROAST_SCHEMA = {

@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Gate for every task: `npx vitest run` and `npx tsc --noEmit` both clean, run from `/Users/alanoliv/code/team8-ai`.
+- Gate for every task: `npx vitest run` and `npx tsc --noEmit` both clean, run from `/Users/me/code/team8-ai`.
 - Alive = `sessions/<pid>.json` names a pid that answers `process.kill(pid, 0)` (or EPERM) and is not a `bg-spare` (`recycledSpares`). Busy and idle-at-prompt both count. No `IDLE_GRACE_MS` rows.
 - `transcriptMeta` first read: last 256 KB (`TAIL_WINDOW = 256 * 1024`) plus the 64 KB head; later reads incremental from the remembered offset.
 - One picker switch route: `POST /api/select-session/<id>`. `POST /api/teams/:name/select` stays for the launcher announce only. `GET /api/teams` is removed.
