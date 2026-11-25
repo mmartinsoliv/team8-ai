@@ -1,6 +1,6 @@
 {
   "name": "team8-ai",
-  "version": "1.0.86",
+  "version": "1.0.87",
   "description": "A live browser console for Claude Code agent teams — every teammate's transcript, tasks, mail and status in one window. Starts itself the first time a team is spawned.",
   "author": {
     "name": "mmartinsoliv"
