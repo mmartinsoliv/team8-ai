@@ -3,7 +3,6 @@
 spec: docs/team8-ai/specs/2026-09-30-team8-ai-speed-design.md (section 0)
 plan: docs/team8-ai/plans/2026-09-30-team8-ai-measure.md
 branch: measure
-pr: https://github.com/alan-oliv/team8/pull/35
 
 ## Brainstorm
 - path: architectural. Six PRs from the 2026-09-29 delay log; this is PR 0, the ruler the other five are measured with

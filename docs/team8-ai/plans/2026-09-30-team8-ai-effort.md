@@ -215,7 +215,7 @@ git commit -m "Pin each team8-ai agent's effort in its definition" -- plugin/age
 
 This step settles the scenario's setup before it is written down.
 - **Flags.** The CLI has `--effort <level>` and `--plugin-dir <path>`, and `-p` runs headless.
-- **Same-name plugin.** The user also has the released team8-ai plugin installed, under the same name `team8-ai`. Find out which definitions a `claude -p --plugin-dir ~/code/team8-ai-speed/plugin` session actually loads: `team8-ai:executor-high` only exists on this branch, so try spawning it. If the installed plugin shadows the directory, disable it for the run with `--settings '{"enabledPlugins":{"team8-ai@grimoire":false}}'` and check again.
+- **Same-name plugin.** The user also has the released team8-ai plugin installed, under the same name `team8-ai`. Find out which definitions a `claude -p --plugin-dir ~/code/team8-ai-speed/plugin` session actually loads: `team8-ai:executor-high` only exists on this branch, so try spawning it. If the installed plugin shadows the directory, disable it for the run with `--settings '{"enabledPlugins":{"team8-ai@marketplace":false}}'` and check again.
 - **Permissions.** Headless sessions need the Agent and Bash tools allowed. Try `--allowedTools "Agent,Bash"`.
 - **Session id.** Get it from `--output-format json`, which prints `session_id`.
 - **What to report.** Write down the exact commands that worked.

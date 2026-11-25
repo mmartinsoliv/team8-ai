@@ -3,7 +3,6 @@
 spec: docs/team8-ai/specs/2026-09-30-team8-ai-speed-design.md (section 1)
 plan: docs/team8-ai/plans/2026-09-30-team8-ai-effort.md
 branch: effort
-pr: https://github.com/alan-oliv/team8/pull/36
 
 ## Brainstorm
 - path: architectural (PR 1 of the six-PR speed program; the spec was approved on 2026-09-30)

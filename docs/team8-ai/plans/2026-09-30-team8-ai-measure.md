@@ -97,7 +97,7 @@ describe('classifyTool', () => {
   it('gives waits, git and plain file commands their own kinds', () => {
     expect(classifyTool('Bash', { command: 'sleep 5; date' })).toBe('sleep/poll');
     expect(classifyTool('Bash', { command: 'until [ -f done ]; do sleep 2; done' })).toBe('sleep/poll');
-    expect(classifyTool('Bash', { command: 'ALANIZED=1 gh pr create --title x' })).toBe('git/gh');
+    expect(classifyTool('Bash', { command: 'gh pr create --title x' })).toBe('git/gh');
     expect(classifyTool('Bash', { command: 'cd repo && git log --oneline -3' })).toBe('git/gh');
     expect(classifyTool('Bash', { command: 'grep -n foo src/a.ts' })).toBe('files');
     expect(classifyTool('Bash', { command: 'python3 analyze.py' })).toBe('other');

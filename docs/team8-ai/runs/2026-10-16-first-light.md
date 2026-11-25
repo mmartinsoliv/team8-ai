@@ -3,7 +3,6 @@
 spec: docs/team8-ai/specs/2026-10-16-first-light-design.md
 plan: docs/team8-ai/plans/2026-10-16-first-light.md
 branch: empty-state
-pr: https://github.com/alan-oliv/team8/pull/47
 
 ## Brainstorm
 - path: architectural

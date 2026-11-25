@@ -3,7 +3,6 @@
 spec: docs/team8-ai/specs/2026-10-11-team8-ai-mods-design.md
 plan: docs/team8-ai/plans/2026-10-11-team8-ai-mods.md
 branch: mods
-pr: https://github.com/alan-oliv/team8/pull/40
 
 ## Brainstorm
 - path: architectural, with a probe spike before the design

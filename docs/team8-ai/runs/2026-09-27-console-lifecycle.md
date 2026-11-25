@@ -3,7 +3,6 @@
 spec: docs/team8-ai/specs/2026-09-27-console-lifecycle-design.md
 plan: docs/team8-ai/plans/2026-09-27-console-lifecycle.md
 branch: console-lifecycle
-pr: https://github.com/alan-oliv/team8/pull/32
 
 ## Brainstorm
 - path: architectural (sub-project 1 of 5 from the 2026-09-27 improvement study)

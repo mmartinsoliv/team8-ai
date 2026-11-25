@@ -3,7 +3,6 @@
 spec: docs/team8-ai/specs/2026-10-11-team8-ai-mod-band-pane-design.md
 plan: docs/team8-ai/plans/2026-10-11-team8-ai-mod-band-pane.md
 branch: team8-ai-mod
-pr: https://github.com/alan-oliv/team8/pull/41 · session-cards: https://github.com/alan-oliv/claude-mods/pull/4 (closed unmerged 2026-10-12)
 
 ## Brainstorm
 - path: architectural, from the design handoff in `docs/design_handoff_team8-ai_mod/`, with a probe spike before the design

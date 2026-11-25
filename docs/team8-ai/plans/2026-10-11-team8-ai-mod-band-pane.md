@@ -1739,7 +1739,6 @@ Expected: PASS, including the new test.
 
 Bump the version as the Files list says, then commit by pathspec with a message in that repo's style and no AI attribution. Push the branch.
 
-Then open a PR against `main` in `alan-oliv/claude-mods` with the gh CLI. The machine's PR hook asks for the `grimoire:alanizer` skill first: load it, write the title and body in its voice, and prefix the command with `ALANIZED=1`. Report the URL.
 
 ---
 
@@ -1801,4 +1800,3 @@ This goes on the open branch `session-cards-keeps-other-bands` (PR #4). session-
 - [ ] **Step 1:** Change the test's expectation and see it fail: `claude plugin test session-cards`.
 - [ ] **Step 2:** Move `{rest}` and change the comment.
 - [ ] **Step 3:** Run `claude plugin test session-cards && claude plugin validate session-cards` and see both pass.
-- [ ] **Step 4:** Commit by pathspec in the repo's style and push to the branch, so it lands in PR #4. Update PR #4's title and body to say "under its own cards" with `ALANIZED=1 gh pr edit 4 -R alan-oliv/claude-mods …`, after loading the `grimoire:alanizer` skill.

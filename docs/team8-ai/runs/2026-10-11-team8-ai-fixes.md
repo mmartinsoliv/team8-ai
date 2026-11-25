@@ -3,7 +3,6 @@
 spec: docs/team8-ai/specs/2026-10-11-team8-ai-fixes-design.md
 plan: docs/team8-ai/plans/2026-10-11-team8-ai-fixes.md
 branch: fixes
-pr: https://github.com/alan-oliv/team8/pull/39
 
 ## Brainstorm
 - path: architectural
